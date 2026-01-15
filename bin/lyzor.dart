@@ -1,7 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
-
+import 'dart:isolate';
 import 'package:args/args.dart';
 import 'package:path/path.dart' as p;
 import 'package:watcher/watcher.dart';
@@ -125,7 +125,14 @@ Future<void> _handleCreate(ArgResults command) async {
     exit(64);
   }
 
-  final packageRoot = _findPackageRoot();
+  final libUri = await Isolate.resolvePackageUri(Uri.parse('package:lyzor/lyzor.dart'));
+
+  if (libUri == null) {
+    print('Error: Could not resolve package path. Are you sure the package is installed?');
+    exit(1);
+  }
+
+  final packageRoot = File(p.fromUri(libUri)).parent.parent;
   final templateDir = Directory(p.join(packageRoot.path, 'template', 'basic'));
 
   if (!await templateDir.exists()) {
