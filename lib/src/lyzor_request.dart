@@ -6,8 +6,9 @@ import 'package:lyzor/src/lyzor_exceptions.dart';
 class Request {
   final HttpRequest raw;
   final Map<String, String> pathParams;
+  final int maxBodySize;
 
-  Request(this.raw, [this.pathParams = const {}]);
+  Request(this.raw, {this.pathParams = const {}, this.maxBodySize = 10485760});
 
   String get method => raw.method;
   Uri get uri => raw.uri;
@@ -21,19 +22,37 @@ class Request {
   Future<String>? _bodyFuture;
 
   Future<String> get body {
-    final cached = _bodyString;
-    if (cached != null) return Future.value(cached);
+    if (_bodyString != null) return Future.value(_bodyString!);
+    if (_bodyFuture != null) return _bodyFuture!;
 
-    final inflight = _bodyFuture;
-    if (inflight != null) return inflight;
+    _bodyFuture = _readBody();
 
-    final future = utf8.decoder.bind(raw).join().then((s) {
-      _bodyString = s;
-      return s;
-    });
+    return _bodyFuture!;
+  }
 
-    _bodyFuture = future;
-    return future;
+  Future<String> _readBody() async {
+    final contentLength = raw.headers.contentLength;
+
+    if (contentLength > maxBodySize) {
+      throw PayloadTooLargeException();
+    }
+
+    final List<int> bytes = [];
+    int received = 0;
+
+    await for (final chunk in raw) {
+      received += chunk.length;
+
+      if (received > maxBodySize) {
+        throw PayloadTooLargeException();
+      }
+
+      bytes.addAll(chunk);
+    }
+
+    _bodyString = utf8.decode(bytes);
+
+    return _bodyString!;
   }
 
   Future<Map<String, dynamic>> get json async {

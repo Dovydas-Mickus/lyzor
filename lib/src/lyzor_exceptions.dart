@@ -23,6 +23,10 @@ class UnauthorizedException extends HttpException {
   UnauthorizedException([String message = 'Unauthorized']) : super(message, HttpStatus.unauthorized);
 }
 
+class PayloadTooLargeException extends HttpException {
+  PayloadTooLargeException([String message = 'Payload Too Large']) : super(message, HttpStatus.requestEntityTooLarge);
+}
+
 class MethodNotAllowedException extends HttpException {
   final Set<String> allowedMethods;
 

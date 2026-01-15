@@ -52,6 +52,7 @@ class Lyzor {
   late HttpServer _server;
   final Router _router = Router();
   final List<Middleware> _globalMiddlewares = [];
+  int maxBodySize = 10 * 1024 * 1024;
 
   Lyzor();
 
@@ -132,7 +133,7 @@ class Lyzor {
           }
 
           final route = match.data!;
-          final request = Request(rawReq, match.params);
+          final request = Request(rawReq, pathParams: match.params, maxBodySize: maxBodySize);
           final response = Response(rawReq.response);
           final context = Context(request, response);
 
