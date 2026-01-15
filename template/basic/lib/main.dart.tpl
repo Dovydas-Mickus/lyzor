@@ -1,7 +1,7 @@
-import 'package:lizard/lizard.dart';
+import 'package:lyzor/lyzor.dart';
 
 Future<void> main() async {
-  final app = Lizard();
+  final app = Lyzor();
 
   app.route('/').get((ctx) async {
     await ctx.response.send('Hello from __name__!');
