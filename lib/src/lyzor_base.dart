@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:io';
+import 'package:lyzor/src/lyzor_registry.dart';
 import 'package:lyzor/src/lyzor_request.dart';
 import 'package:lyzor/src/lyzor_router.dart';
 import 'lyzor_exceptions.dart';
@@ -52,9 +53,16 @@ class Lyzor {
   late HttpServer _server;
   final Router _router = Router();
   final List<Middleware> _globalMiddlewares = [];
+  final Registry _registry = Registry();
   int maxBodySize = 10 * 1024 * 1024;
 
   Lyzor();
+
+  Lyzor provide<T>(T service) {
+    _registry.register<T>(service);
+
+    return this;
+  }
 
   Lyzor use(Middleware middleware) {
     _globalMiddlewares.add(middleware);
@@ -78,23 +86,24 @@ class Lyzor {
 
   Future<void> _handleError(HttpRequest rawReq, Object error, StackTrace st, String method, String path) async {
     final response = Response(rawReq.response);
-    Result errorResult;
+    Result result;
 
     if (error is MethodNotAllowedException) {
-      errorResult = Results.json(
+      result = Results.json(
         {'error': error.message, 'allowed': error.allowedMethods.toList()},
-        status: error.statusCode,
+        status: HttpStatus.methodNotAllowed,
         headers: {'Allow': error.allowedMethods.join(', ')},
       );
+    } else if (error is NotFoundException) {
+      result = Results.json({'error': error.message}, status: HttpStatus.notFound);
     } else if (error is HttpException) {
-      print('[$method $path] HTTP Error: ${error.statusCode} - ${error.message}');
-      errorResult = Results.json({'error': error.message, 'details': error.details}, status: error.statusCode);
+      result = Results.json({'error': error.message, 'details': error.details}, status: error.statusCode);
     } else {
       print('[$method $path] Unhandled Error: $error\n$st');
-      errorResult = Results.json({'error': 'Internal Server Error'}, status: HttpStatus.internalServerError);
+      result = Results.json({'error': 'Internal Server Error'}, status: 500);
     }
 
-    await errorResult.execute(response);
+    await result.execute(response);
   }
 
   Result? _coerce(Object? v) {
@@ -135,7 +144,7 @@ class Lyzor {
           final route = match.data!;
           final request = Request(rawReq, pathParams: match.params, maxBodySize: maxBodySize);
           final response = Response(rawReq.response);
-          final context = Context(request, response);
+          final context = Context(request, response, _registry);
 
           List<Middleware> pipeline = [..._globalMiddlewares, ...route.middlewares, (ctx, next) => route.handler(ctx)];
 
@@ -149,7 +158,6 @@ class Lyzor {
           final out = await next();
           final result = _coerce(out);
 
-          // 5. FINALIZE
           if (result != null && !context.response.isCommitted) {
             await result.execute(context.response);
           }
