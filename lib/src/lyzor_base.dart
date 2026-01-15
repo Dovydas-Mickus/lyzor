@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:io';
 import 'package:lyzor/src/lyzor_request.dart';
+import 'package:lyzor/src/lyzor_router.dart';
 import 'lyzor_exceptions.dart';
 import 'package:lyzor/src/lyzor_response.dart';
 import 'lyzor_result.dart';
@@ -11,17 +12,6 @@ typedef Handler = FutureOr<Object?> Function(Context ctx);
 typedef Next = FutureOr<Object?> Function();
 typedef Middleware = FutureOr<Object?> Function(Context ctx, Next next);
 typedef Ctx = Context;
-
-class _Route {
-  final String method;
-  final String path;
-  final RegExp regex;
-  final List<String> paramNames;
-  final Handler handler;
-  final List<Middleware> middlewares;
-
-  _Route(this.method, this.path, this.regex, this.paramNames, this.handler, [this.middlewares = const []]);
-}
 
 class RouteDefinition {
   final Lyzor _api;
@@ -60,7 +50,7 @@ abstract class Controller {
 
 class Lyzor {
   late HttpServer _server;
-  final List<_Route> _routes = [];
+  final Router _router = Router();
   final List<Middleware> _globalMiddlewares = [];
 
   Lyzor();
@@ -82,31 +72,28 @@ class Lyzor {
   }
 
   void _addRoute(String method, String path, Handler handler, List<Middleware> routeMiddlewares) {
-    final paramNames = <String>[];
-    final pattern = path.replaceAllMapped(RegExp(r':(\w+)'), (m) {
-      paramNames.add(m[1]!);
-      return '([^/]+)';
-    });
-    final regex = RegExp('^$pattern\$');
-    _routes.add(_Route(method, path, regex, paramNames, handler, routeMiddlewares));
+    _router.addRoute(method, path, handler, routeMiddlewares);
   }
 
   Future<void> _handleError(HttpRequest rawReq, Object error, StackTrace st, String method, String path) async {
     final response = Response(rawReq.response);
+    Result errorResult;
 
     if (error is MethodNotAllowedException) {
-      response.setHeader('Allow', error.allowedMethods.join(', '));
-      await response.status(error.statusCode).json({'error': error.message, 'allowed': error.allowedMethods.toList()});
-      return;
-    }
-
-    if (error is HttpException) {
+      errorResult = Results.json(
+        {'error': error.message, 'allowed': error.allowedMethods.toList()},
+        status: error.statusCode,
+        headers: {'Allow': error.allowedMethods.join(', ')},
+      );
+    } else if (error is HttpException) {
       print('[$method $path] HTTP Error: ${error.statusCode} - ${error.message}');
-      await response.status(error.statusCode).json({'error': error.message, 'details': error.details});
+      errorResult = Results.json({'error': error.message, 'details': error.details}, status: error.statusCode);
     } else {
       print('[$method $path] Unhandled Error: $error\n$st');
-      await response.status(HttpStatus.internalServerError).json({'error': 'Internal Server Error'});
+      errorResult = Results.json({'error': 'Internal Server Error'}, status: HttpStatus.internalServerError);
     }
+
+    await errorResult.execute(response);
   }
 
   Result? _coerce(Object? v) {
@@ -134,50 +121,24 @@ class Lyzor {
         final requestPath = rawReq.uri.path;
 
         try {
-          final method = requestMethod;
-          final path = requestPath;
+          final match = _router.lookup(requestMethod, requestPath);
 
-          _Route? matchedRoute;
-          Map<String, String> pathParams = {};
-          final allowedMethods = <String>{};
-
-          for (final route in _routes) {
-            final match = route.regex.firstMatch(path);
-            if (match == null) continue;
-
-            allowedMethods.add(route.method);
-
-            if (route.method == method) {
-              matchedRoute = route;
-
-              for (var i = 0; i < route.paramNames.length; i++) {
-                pathParams[route.paramNames[i]] = match.group(i + 1)!;
-              }
-              break;
-            }
+          if (match == null) {
+            throw NotFoundException('Route $requestMethod $requestPath not found');
           }
 
-          if (matchedRoute == null) {
-            if (allowedMethods.isNotEmpty) {
-              throw MethodNotAllowedException(method, path, allowedMethods);
-            }
-            throw NotFoundException('Route $method $path not found');
+          if (match.isMethodNotAllowed) {
+            throw MethodNotAllowedException(requestMethod, requestPath, match.allowedMethods);
           }
 
-          final request = Request(rawReq, pathParams);
+          final route = match.data!;
+          final request = Request(rawReq, match.params);
           final response = Response(rawReq.response);
           final context = Context(request, response);
 
-          final currentRoute = matchedRoute;
-
-          List<Middleware> pipeline = [
-            ..._globalMiddlewares,
-            ...currentRoute.middlewares,
-            (ctx, next) => currentRoute.handler(ctx),
-          ];
+          List<Middleware> pipeline = [..._globalMiddlewares, ...route.middlewares, (ctx, next) => route.handler(ctx)];
 
           int middlewareIndex = 0;
-
           FutureOr<Object?> next() async {
             if (middlewareIndex >= pipeline.length) return null;
             final current = pipeline[middlewareIndex++];
@@ -187,6 +148,7 @@ class Lyzor {
           final out = await next();
           final result = _coerce(out);
 
+          // 5. FINALIZE
           if (result != null && !context.response.isCommitted) {
             await result.execute(context.response);
           }

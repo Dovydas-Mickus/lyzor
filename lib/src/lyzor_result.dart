@@ -1,4 +1,6 @@
+import 'dart:convert';
 import 'dart:io';
+import 'package:mime/mime.dart';
 import 'lyzor_response.dart';
 
 abstract class Result {
@@ -14,8 +16,13 @@ class JsonResult implements Result {
 
   @override
   Future<void> execute(Response res) async {
+    res.status(status).type(ContentType.json);
     headers.forEach(res.setHeader);
-    await res.status(status).json(data);
+    res.prepare();
+
+    res.raw.write(jsonEncode(data));
+    await res.raw.close();
+    res.markCommitted();
   }
 }
 
@@ -30,8 +37,13 @@ class TextResult implements Result {
 
   @override
   Future<void> execute(Response res) async {
+    res.status(status).type(type);
     headers.forEach(res.setHeader);
-    await res.send(text, status: status, type: type);
+    res.prepare();
+
+    res.raw.write(text);
+    await res.raw.close();
+    res.markCommitted();
   }
 }
 
@@ -44,7 +56,19 @@ class FileResult implements Result {
 
   @override
   Future<void> execute(Response res) async {
-    await res.file(file, status: status, type: type);
+    if (!await file.exists()) {
+      await TextResult('File not found', status: HttpStatus.notFound).execute(res);
+      return;
+    }
+
+    final resolvedType = type ?? ContentType.parse(lookupMimeType(file.path) ?? 'application/octet-stream');
+
+    res.status(status ?? HttpStatus.ok).type(resolvedType);
+    res.prepare();
+
+    await file.openRead().pipe(res.raw);
+    // pipe() automatically closes the consumer (res.raw)
+    res.markCommitted();
   }
 }
 
@@ -56,30 +80,23 @@ class RedirectResult implements Result {
 
   @override
   Future<void> execute(Response res) async {
-    res.redirect(url, status: status);
+    res.status(status);
+    res.setHeader(HttpHeaders.locationHeader, url);
+    res.prepare();
+    await res.raw.close();
+    res.markCommitted();
   }
 }
 
-class EmptyResult implements Result {
-  final int status;
-  EmptyResult([this.status = HttpStatus.noContent]);
-
-  @override
-  Future<void> execute(Response res) async {
-    await res.send('', status: status);
-  }
-}
-
+// Shortcut Factory
 class Results {
   static Result json(Object data, {int status = HttpStatus.ok, Map<String, String> headers = const {}}) =>
       JsonResult(data, status: status, headers: headers);
 
   static Result text(String text, {int status = HttpStatus.ok, ContentType? type}) =>
-      TextResult(text, status: status, type: type ?? ContentType.text);
+      TextResult(text, status: status, type: type);
 
   static Result file(File file, {int? status, ContentType? type}) => FileResult(file, status: status, type: type);
 
   static Result redirect(String url, {int status = HttpStatus.found}) => RedirectResult(url, status: status);
-
-  static Result empty([int status = HttpStatus.noContent]) => EmptyResult(status);
 }
