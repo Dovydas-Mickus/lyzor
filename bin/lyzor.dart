@@ -178,22 +178,6 @@ Future<void> _copyTemplate(Directory source, Directory target, {Map<String, Stri
   }
 }
 
-Directory _findPackageRoot() {
-  var dir = File(Platform.script.toFilePath()).parent;
-
-  while (true) {
-    final pubspec = File(p.join(dir.path, 'pubspec.yaml'));
-    if (pubspec.existsSync()) {
-      return dir;
-    }
-    final parent = dir.parent;
-    if (parent.path == dir.path) {
-      throw Exception('Could not locate package root (pubspec.yaml not found).');
-    }
-    dir = parent;
-  }
-}
-
 Future<void> _handleDev(ArgResults command) async {
   final projectDir = Directory.current.path;
   final entryFile = p.join(projectDir, 'lib', 'main.dart');
