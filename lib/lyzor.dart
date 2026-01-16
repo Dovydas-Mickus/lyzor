@@ -6,3 +6,4 @@ export 'src/lyzor_response.dart';
 export 'src/lyzor_exceptions.dart';
 export 'src/lyzor_result.dart';
 export 'src/lyzor_middleware.dart';
+export 'src/lyzor_validator.dart';
