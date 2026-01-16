@@ -6,7 +6,7 @@ import 'package:mime/mime.dart';
 
 class Request {
   final HttpRequest raw;
-  final Map<String, String> pathParams;
+  Map<String, String> pathParams;
   final int maxBodySize;
 
   FormData? _formData;

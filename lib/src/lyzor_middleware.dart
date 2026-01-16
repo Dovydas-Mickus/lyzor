@@ -6,10 +6,8 @@ Middleware recovery() {
     try {
       return await next();
     } catch (e, st) {
-      print('[Recovery] Caught Exception: $e');
-      print(st);
-
-      return Results.json({'error': 'Internal Server Error', 'message': e.toString()}, status: 500);
+      print('[Recovery] $e\n$st');
+      return Results.json({'error': 'Internal Server Error'}, status: 500);
     }
   };
 }
@@ -17,19 +15,13 @@ Middleware recovery() {
 Middleware logger() {
   return (ctx, next) async {
     final sw = Stopwatch()..start();
-    final method = ctx.method;
-    final path = ctx.uri.path;
-
-    print('--> $method $path');
-
-    final result = await next();
-
+    final out = await next();
     sw.stop();
-    final status = ctx.response.statusCode;
 
-    print('<-- $method $path | $status | ${sw.elapsedMilliseconds}ms');
+    int status = (out is Result) ? out.status : ctx.response.statusCode;
+    print('${ctx.method} ${ctx.uri.path} | $status | ${sw.elapsedMilliseconds}ms');
 
-    return result;
+    return out;
   };
 }
 

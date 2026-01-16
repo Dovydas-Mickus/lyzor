@@ -114,59 +114,66 @@ class Lyzor {
     return Results.text(v.toString());
   }
 
-  Future<void> run({String host = '127.0.0.1', int port = 8080, SecurityContext? securityContext}) async {
+  Future<void> run({String host = '127.0.0.1', int port = 8080}) async {
     try {
-      if (securityContext != null) {
-        print('SecurityContext is not null');
-        print('Server will run on port 443');
-        _server = await HttpServer.bindSecure(host, 443, securityContext);
-        print('Server running at http://$host:443/');
-      } else {
-        _server = await HttpServer.bind(host, port);
-        print('Server running at http://$host:$port/');
-      }
+      _server = await HttpServer.bind(host, port);
+      print('Server running at http://$host:$port/');
 
       await for (final rawReq in _server) {
-        final requestMethod = rawReq.method;
-        final requestPath = rawReq.uri.path;
-
-        try {
-          final match = _router.lookup(requestMethod, requestPath);
-
-          if (match == null) {
-            throw NotFoundException('Route $requestMethod $requestPath not found');
-          }
-
-          if (match.isMethodNotAllowed) {
-            throw MethodNotAllowedException(requestMethod, requestPath, match.allowedMethods);
-          }
-
-          final route = match.data!;
-          final request = Request(rawReq, pathParams: match.params, maxBodySize: maxBodySize);
-          final response = Response(rawReq.response);
-          final context = Context(request, response, _registry);
-
-          List<Middleware> pipeline = [..._globalMiddlewares, ...route.middlewares, (ctx, next) => route.handler(ctx)];
-
-          int middlewareIndex = 0;
-          FutureOr<Object?> next() async {
-            if (middlewareIndex >= pipeline.length) return null;
-            final current = pipeline[middlewareIndex++];
-            return await current(context, next);
-          }
-
-          final out = await next();
-          final result = _coerce(out);
-
-          if (result != null && !context.response.isCommitted) {
-            await result.execute(context.response);
-          }
-        } catch (e, st) {
-          await _handleError(rawReq, e, st, requestMethod, requestPath);
-        }
+        _handleRequest(rawReq);
       }
     } catch (e, st) {
       print('Server startup error: $e\n$st');
     }
+  }
+
+  Future<void> _handleRequest(HttpRequest rawReq) async {
+    final requestMethod = rawReq.method;
+    final requestPath = rawReq.uri.path;
+
+    final response = Response(rawReq.response);
+    final request = Request(rawReq, pathParams: {}, maxBodySize: maxBodySize);
+    final context = Context(request, response, _registry);
+
+    try {
+      final finalOutput = await _dispatch(context);
+      final result = _coerce(finalOutput);
+
+      if (result != null && !context.response.isCommitted) {
+        await result.execute(context.response);
+      }
+    } catch (e, st) {
+      if (!context.response.isCommitted) {
+        await _handleError(rawReq, e, st, requestMethod, requestPath);
+      }
+    }
+  }
+
+  Future<Object?> _dispatch(Context ctx, [int index = 0]) async {
+    if (index < _globalMiddlewares.length) {
+      return _coerce(await _globalMiddlewares[index](ctx, () => _dispatch(ctx, index + 1)));
+    }
+
+    final match = _router.lookup(ctx.method, ctx.uri.path);
+
+    if (match == null) {
+      throw NotFoundException('Route ${ctx.method} ${ctx.uri.path} not found');
+    }
+
+    if (match.isMethodNotAllowed) {
+      throw MethodNotAllowedException(ctx.method, ctx.uri.path, match.allowedMethods);
+    }
+
+    final route = match.data!;
+    ctx.request.pathParams = match.params;
+
+    final routePipeline = [...route.middlewares, (c, _) => route.handler(c)];
+    return await _executePipeline(ctx, routePipeline);
+  }
+
+  Future<Object?> _executePipeline(Context ctx, List<Middleware> pipeline, [int index = 0]) async {
+    if (index >= pipeline.length) return null;
+
+    return _coerce(await pipeline[index](ctx, () => _executePipeline(ctx, pipeline, index + 1)));
   }
 }

@@ -4,11 +4,15 @@ import 'package:mime/mime.dart';
 import 'lyzor_response.dart';
 
 abstract class Result {
+  int get status;
+
   Future<void> execute(Response res);
 }
 
 class JsonResult implements Result {
   final Object data;
+
+  @override
   final int status;
   final Map<String, String> headers;
 
@@ -28,6 +32,8 @@ class JsonResult implements Result {
 
 class TextResult implements Result {
   final String text;
+
+  @override
   final int status;
   final ContentType type;
   final Map<String, String> headers;
@@ -49,10 +55,14 @@ class TextResult implements Result {
 
 class FileResult implements Result {
   final File file;
-  final int? status;
+
+  final int? _status;
   final ContentType? type;
 
-  FileResult(this.file, {this.status, this.type});
+  @override
+  int get status => _status ?? HttpStatus.ok;
+
+  FileResult(this.file, {int? status, this.type}) : _status = status;
 
   @override
   Future<void> execute(Response res) async {
@@ -63,17 +73,18 @@ class FileResult implements Result {
 
     final resolvedType = type ?? ContentType.parse(lookupMimeType(file.path) ?? 'application/octet-stream');
 
-    res.status(status ?? HttpStatus.ok).type(resolvedType);
+    res.status(status).type(resolvedType);
     res.prepare();
 
     await file.openRead().pipe(res.raw);
-    // pipe() automatically closes the consumer (res.raw)
     res.markCommitted();
   }
 }
 
 class RedirectResult implements Result {
   final String url;
+
+  @override
   final int status;
 
   RedirectResult(this.url, {this.status = HttpStatus.found});
