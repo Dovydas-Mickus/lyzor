@@ -6,7 +6,14 @@ Middleware recovery() {
     try {
       return await next();
     } catch (e, st) {
-      print('[Recovery] $e\n$st');
+      if (e is HttpException) {
+        print('[HTTP ${e.statusCode}] ${ctx.method} ${ctx.uri.path} - ${e.message}');
+
+        return Results.json({'error': e.message, if (e.details != null) 'details': e.details}, status: e.statusCode);
+      }
+
+      print('[Recovery] Unhandled Error: $e\n$st');
+
       return Results.json({'error': 'Internal Server Error'}, status: 500);
     }
   };
