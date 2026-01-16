@@ -1,11 +1,11 @@
 import 'lyzor_base.dart';
 
-class _RouteData {
+class Route {
   final Handler handler;
   final List<Middleware> middlewares;
   final String method;
 
-  _RouteData(this.method, this.handler, this.middlewares);
+  Route(this.method, this.handler, this.middlewares);
 }
 
 class _Node {
@@ -16,7 +16,7 @@ class _Node {
 
   _Node? wildcardChild;
 
-  final Map<String, _RouteData> routes = {};
+  final Map<String, Route> routes = {};
 
   bool get isLeaf => routes.isNotEmpty;
 }
@@ -24,26 +24,28 @@ class _Node {
 class Router {
   final _Node _root = _Node();
 
-  void addRoute(String method, String path, Handler handler, List<Middleware> middlewares) {
+  Route addRoute(String method, String path, Handler handler, List<Middleware> middlewares) {
     _Node current = _root;
     final segments = _splitPath(path);
 
     for (final segment in segments) {
       if (segment.startsWith(':')) {
-        // Parameter segment
         current.paramChild ??= _Node();
         current.paramName = segment.substring(1);
         current = current.paramChild!;
       } else if (segment == '*') {
-        // Wildcard segment
         current.wildcardChild ??= _Node();
         current = current.wildcardChild!;
       } else {
-        // Static segment
         current = current.staticChildren.putIfAbsent(segment, () => _Node());
       }
     }
-    current.routes[method] = _RouteData(method, handler, middlewares);
+
+    final route = Route(method, handler, middlewares);
+
+    current.routes[method] = route;
+
+    return route;
   }
 
   _SearchResult? lookup(String method, String path) {
@@ -52,21 +54,16 @@ class Router {
     final Map<String, String> params = {};
 
     for (final segment in segments) {
-      // 1. Try static match (Highest priority)
       if (current.staticChildren.containsKey(segment)) {
         current = current.staticChildren[segment]!;
-      }
-      // 2. Try parameter match
-      else if (current.paramChild != null) {
+      } else if (current.paramChild != null) {
         params[current.paramName!] = segment;
         current = current.paramChild!;
-      }
-      // 3. Try wildcard match
-      else if (current.wildcardChild != null) {
+      } else if (current.wildcardChild != null) {
         current = current.wildcardChild!;
-        break; // Wildcard consumes the rest
+        break;
       } else {
-        return null; // No match found
+        return null;
       }
     }
 
@@ -74,7 +71,6 @@ class Router {
 
     final routeData = current.routes[method];
 
-    // Check for Method Not Allowed
     if (routeData == null) {
       return _SearchResult(null, params, isMethodNotAllowed: true, allowedMethods: current.routes.keys.toSet());
     }
@@ -88,7 +84,7 @@ class Router {
 }
 
 class _SearchResult {
-  final _RouteData? data;
+  final Route? data;
   final Map<String, String> params;
   final bool isMethodNotAllowed;
   final Set<String> allowedMethods;

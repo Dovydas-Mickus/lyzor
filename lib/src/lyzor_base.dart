@@ -26,13 +26,13 @@ class RouteDefinition {
     return this;
   }
 
-  void get(Handler handler) => _api._addRoute('GET', _path, handler, _middlewares);
-  void post(Handler handler) => _api._addRoute('POST', _path, handler, _middlewares);
-  void put(Handler handler) => _api._addRoute('PUT', _path, handler, _middlewares);
-  void patch(Handler handler) => _api._addRoute('PATCH', _path, handler, _middlewares);
-  void delete(Handler handler) => _api._addRoute('DELETE', _path, handler, _middlewares);
-  void head(Handler handler) => _api._addRoute('HEAD', _path, handler, _middlewares);
-  void options(Handler handler) => _api._addRoute('OPTIONS', _path, handler, _middlewares);
+  Route get(Handler handler) => _api._addRoute('GET', _path, handler, _middlewares);
+  Route post(Handler handler) => _api._addRoute('POST', _path, handler, _middlewares);
+  Route put(Handler handler) => _api._addRoute('PUT', _path, handler, _middlewares);
+  Route patch(Handler handler) => _api._addRoute('PATCH', _path, handler, _middlewares);
+  Route delete(Handler handler) => _api._addRoute('DELETE', _path, handler, _middlewares);
+  Route head(Handler handler) => _api._addRoute('HEAD', _path, handler, _middlewares);
+  Route options(Handler handler) => _api._addRoute('OPTIONS', _path, handler, _middlewares);
 
   void all(Handler handler) {
     get(handler);
@@ -80,8 +80,8 @@ class Lyzor {
     return RouteDefinition(this, path);
   }
 
-  void _addRoute(String method, String path, Handler handler, List<Middleware> routeMiddlewares) {
-    _router.addRoute(method, path, handler, routeMiddlewares);
+  Route _addRoute(String method, String path, Handler handler, List<Middleware> routeMiddlewares) {
+    return _router.addRoute(method, path, handler, routeMiddlewares);
   }
 
   Future<void> _handleError(HttpRequest rawReq, Object error, StackTrace st, String method, String path) async {
