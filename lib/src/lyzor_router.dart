@@ -5,6 +5,11 @@ class Route {
   final List<Middleware> middlewares;
   final String method;
 
+  Route use(Middleware middleware) {
+    middlewares.add(middleware);
+    return this;
+  }
+
   Route(this.method, this.handler, this.middlewares);
 }
 
