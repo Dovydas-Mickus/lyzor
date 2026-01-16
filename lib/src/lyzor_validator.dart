@@ -23,7 +23,7 @@ class Validator {
 }
 
 class Rules {
-  static ValidationRule isRequired([String msg = 'This field is required']) =>
+  static ValidationRule required([String msg = 'This field is required']) =>
       (v) => (v == null || (v is String && v.trim().isEmpty)) ? msg : null;
 
   static ValidationRule isEmail([String msg = 'Invalid email address']) => (v) {
