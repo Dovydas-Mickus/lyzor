@@ -40,4 +40,9 @@ class Response {
       _res.headers.contentType = _contentType;
     }
   }
+
+  void cookie(Cookie cookie) {
+    if (_isCommitted) return;
+    _res.cookies.add(cookie);
+  }
 }
