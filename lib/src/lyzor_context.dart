@@ -17,7 +17,7 @@ class Context {
   Future<String> get body => request.body;
   Future<Map<String, dynamic>> get json => request.json;
 
-  T service<T>() => _registry.get<T>();
+  T read<T>() => _registry.get<T>();
 
   Result jsonResult(Object data, {int status = HttpStatus.ok}) => Results.json(data, status: status);
   Result textResult(String text, {int status = HttpStatus.ok}) => Results.text(text, status: status);
