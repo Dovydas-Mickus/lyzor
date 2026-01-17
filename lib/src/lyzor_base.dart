@@ -130,9 +130,10 @@ class Lyzor {
   Future<void> _handleRequest(HttpRequest rawReq) async {
     final requestMethod = rawReq.method;
     final requestPath = rawReq.uri.path;
+    final pathParams = rawReq.uri.queryParameters;
 
     final response = Response(rawReq.response);
-    final request = Request(rawReq, pathParams: {}, maxBodySize: maxBodySize);
+    final request = Request(rawReq, pathParams: pathParams, maxBodySize: maxBodySize);
     final context = Context(request, response, _registry);
 
     try {
