@@ -143,18 +143,20 @@ class Lyzor {
     final request = Request(rawReq, pathParams: pathParams, maxBodySize: maxBodySize);
     final context = Context(request, response, _registry);
 
-    try {
-      final finalOutput = await _dispatch(context);
-      final result = _coerce(finalOutput);
+    runZoned(() async {
+      try {
+        final finalOutput = await _dispatch(context);
+        final result = _coerce(finalOutput);
 
-      if (result != null && !context.response.isCommitted) {
-        await result.execute(context.response);
+        if (result != null && !context.response.isCommitted) {
+          await result.execute(context.response);
+        }
+      } catch (e, st) {
+        if (!context.response.isCommitted) {
+          await _handleError(rawReq, e, st, requestMethod, requestPath);
+        }
       }
-    } catch (e, st) {
-      if (!context.response.isCommitted) {
-        await _handleError(rawReq, e, st, requestMethod, requestPath);
-      }
-    }
+    }, zoneValues: {#lyzor_context: context});
   }
 
   Future<Object?> _dispatch(Context ctx, [int index = 0]) async {
