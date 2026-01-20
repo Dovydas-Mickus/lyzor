@@ -7,3 +7,4 @@ export 'src/lyzor_exceptions.dart';
 export 'src/lyzor_result.dart';
 export 'src/lyzor_middleware.dart';
 export 'src/lyzor_validator.dart';
+export 'src/lyzor_multithreading.dart';
