@@ -60,3 +60,29 @@ Middleware validateQuery(Validator validator) {
     return await next();
   };
 }
+
+Middleware cors({
+  String origin = '*',
+  String methods = 'GET, POST, PUT, PATCH, DELETE, OPTIONS',
+  String headers = 'Origin, X-Requested-With, Content-Type, Accept, Authorization',
+}) {
+  return (ctx, next) async {
+    if (ctx.method == 'OPTIONS') {
+      return TextResult('', status: 204)
+          .withHeader('Access-Control-Allow-Origin', origin)
+          .withHeader('Access-Control-Allow-Methods', methods)
+          .withHeader('Access-Control-Allow-Headers', headers);
+    }
+
+    final result = await next();
+
+    if (result is Result) {
+      return result
+          .withHeader('Access-Control-Allow-Origin', origin)
+          .withHeader('Access-Control-Allow-Methods', methods)
+          .withHeader('Access-Control-Allow-Headers', headers);
+    }
+
+    return result;
+  };
+}

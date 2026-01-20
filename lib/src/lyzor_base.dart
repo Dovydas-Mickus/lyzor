@@ -51,6 +51,31 @@ abstract class Controller {
   void registerRoutes(Lyzor app);
 }
 
+class RouteGroup {
+  final Lyzor _api;
+  final String _prefix;
+  final List<Middleware> _groupMiddlewares = [];
+
+  RouteGroup(this._api, this._prefix);
+
+  RouteGroup use(Middleware middleware) {
+    _groupMiddlewares.add(middleware);
+    return this;
+  }
+
+  RouteDefinition route(String path) {
+    final fullPath = '$_prefix/$path'.replaceAll('//', '/');
+
+    final def = RouteDefinition(_api, fullPath);
+
+    for (var m in _groupMiddlewares) {
+      def.use(m);
+    }
+
+    return def;
+  }
+}
+
 class Lyzor {
   late HttpServer _server;
   final Router _router = Router();
@@ -203,5 +228,11 @@ class Lyzor {
     final app = builder();
 
     await app.run(host: host, port: port, shared: true);
+  }
+}
+
+extension LyzorGroups on Lyzor {
+  RouteGroup group(String prefix) {
+    return RouteGroup(this, prefix);
   }
 }
