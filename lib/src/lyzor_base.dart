@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:isolate';
 import 'package:lyzor/src/lyzor_registry.dart';
 import 'package:lyzor/src/lyzor_request.dart';
 import 'package:lyzor/src/lyzor_router.dart';
@@ -13,6 +14,7 @@ typedef Handler = FutureOr<Object?> Function();
 typedef Next = FutureOr<Object?> Function();
 typedef Middleware = FutureOr<Object?> Function(Context ctx, Next next);
 typedef Ctx = Context;
+typedef AppBuilder = Lyzor Function();
 
 class RouteDefinition {
   final Lyzor _api;
@@ -179,5 +181,27 @@ class Lyzor {
     if (index >= pipeline.length) return null;
 
     return _coerce(await pipeline[index](ctx, () => _executePipeline(ctx, pipeline, index + 1)));
+  }
+
+  static Future<void> spawn(AppBuilder builder, {int count = 0, String host = '127.0.0.1', int port = 8080}) async {
+    final workers = count <= 0 ? Platform.numberOfProcessors : count;
+
+    print('Starting $workers workers on http://$host:$port');
+
+    for (int i = 0; i < workers; i++) {
+      Isolate.spawn(_startWorker, {'builder': builder, 'host': host, 'port': port});
+    }
+
+    await ProcessSignal.sigint.watch().first;
+  }
+
+  static void _startWorker(Map<String, dynamic> message) async {
+    final AppBuilder builder = message['builder'];
+    final String host = message['host'];
+    final int port = message['port'];
+
+    final app = builder();
+
+    await app.run(host: host, port: port, shared: true);
   }
 }
