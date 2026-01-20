@@ -130,17 +130,9 @@ class Lyzor {
   Future<void> _handleRequest(HttpRequest rawReq) async {
     final requestMethod = rawReq.method;
     final requestPath = rawReq.uri.path;
-    Map<String, String> pathParams;
-
-    try {
-      pathParams = rawReq.uri.queryParameters;
-    } catch (e) {
-      print(e);
-      pathParams = {};
-    }
 
     final response = Response(rawReq.response);
-    final request = Request(rawReq, pathParams: pathParams, maxBodySize: maxBodySize);
+    final request = Request(rawReq, pathParams: {}, maxBodySize: maxBodySize);
     final context = Context(request, response, _registry);
 
     runZoned(() async {

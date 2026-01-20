@@ -44,6 +44,8 @@ Middleware validateBody(Validator validator) {
       }
 
       return await next();
+    } on HttpException catch (_) {
+      rethrow;
     } catch (e) {
       return Results.json({'error': 'Invalid JSON body'}, status: 400);
     }

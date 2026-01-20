@@ -74,6 +74,7 @@ class FileResult implements Result {
     final resolvedType = type ?? ContentType.parse(lookupMimeType(file.path) ?? 'application/octet-stream');
 
     res.status(status).type(resolvedType);
+    res.setHeader('X-Content-Type-Options', 'nosniff');
     res.prepare();
 
     await file.openRead().pipe(res.raw);

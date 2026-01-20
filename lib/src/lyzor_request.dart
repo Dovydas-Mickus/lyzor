@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:lyzor/src/lyzor_exceptions.dart';
 import 'package:mime/mime.dart';
@@ -10,15 +11,14 @@ class Request {
   final int maxBodySize;
 
   FormData? _formData;
+  Map<String, dynamic>? _jsonCache;
 
   Request(this.raw, {this.pathParams = const {}, this.maxBodySize = 10485760});
 
   String get method => raw.method;
   Uri get uri => raw.uri;
-
   Map<String, String> get queryParams => uri.queryParameters;
   HttpHeaders get headers => raw.headers;
-
   String get ip => raw.connectionInfo?.remoteAddress.address ?? 'unknown';
 
   String? _bodyString;
@@ -28,10 +28,6 @@ class Request {
     if (_bodyString != null) return Future.value(_bodyString!);
     if (_bodyFuture != null) return _bodyFuture!;
 
-    if (_formData != null) {
-      throw StateError('Cannot read body as string because it has already been consumed as FormData.');
-    }
-
     _bodyFuture = _readBody();
 
     return _bodyFuture!;
@@ -39,33 +35,33 @@ class Request {
 
   Future<String> _readBody() async {
     final contentLength = raw.headers.contentLength;
+    if (contentLength > maxBodySize) throw PayloadTooLargeException();
 
-    if (contentLength > maxBodySize) {
-      throw PayloadTooLargeException();
-    }
-
-    final List<int> bytes = [];
+    final builder = BytesBuilder(copy: false);
     int received = 0;
 
-    await for (final chunk in raw) {
-      received += chunk.length;
-
-      if (received > maxBodySize) {
-        throw PayloadTooLargeException();
+    try {
+      await for (final chunk in raw) {
+        received += chunk.length;
+        if (received > maxBodySize) throw PayloadTooLargeException();
+        builder.add(chunk);
       }
-
-      bytes.addAll(chunk);
+    } catch (e) {
+      throw BadRequestException('Error reading request body');
     }
 
-    _bodyString = utf8.decode(bytes);
-
+    _bodyString = utf8.decode(builder.takeBytes());
     return _bodyString!;
   }
 
   Future<Map<String, dynamic>> get json async {
+    if (_jsonCache != null) return _jsonCache!;
+
     final text = await body;
     try {
-      return text.trim().isEmpty ? <String, dynamic>{} : jsonDecode(text) as Map<String, dynamic>;
+      _jsonCache = text.trim().isEmpty ? <String, dynamic>{} : jsonDecode(text) as Map<String, dynamic>;
+
+      return _jsonCache!;
     } catch (_) {
       throw BadRequestException('Invalid JSON body');
     }
@@ -83,10 +79,10 @@ class Request {
     final map = <String, String>{};
     final parts = header.split(';').map((s) => s.trim());
     for (final part in parts) {
-      if (part.contains('=')) {
-        final kv = part.split('=');
-        final key = kv[0].trim();
-        final value = kv[1].trim().replaceAll('"', '');
+      final idx = part.indexOf('=');
+      if (idx != -1) {
+        final key = part.substring(0, idx).trim();
+        final value = part.substring(idx + 1).trim().replaceAll('"', '');
         map[key] = value;
       }
     }
@@ -96,13 +92,13 @@ class Request {
   Future<FormData> get formData async {
     if (_formData != null) return _formData!;
 
-    final contentType = raw.headers.contentType?.toString() ?? '';
-    if (!contentType.contains('multipart/form-data')) {
+    final contentType = raw.headers.contentType;
+    if (contentType == null || contentType.primaryType != 'multipart' || contentType.subType != 'form-data') {
       throw BadRequestException('Request is not multipart/form-data');
     }
 
-    final boundary = raw.headers.contentType!.parameters['boundary'];
-    if (boundary == null) throw BadRequestException('Missing boundary in multipart request');
+    final boundary = contentType.parameters['boundary'];
+    if (boundary == null) throw BadRequestException('Missing boundary');
 
     final transformer = MimeMultipartTransformer(boundary);
     final parts = await transformer.bind(raw).toList();
@@ -113,14 +109,16 @@ class Request {
     for (final part in parts) {
       final contentDisposition = part.headers['content-disposition'] ?? '';
       final headerParams = _parseHeaderParameters(contentDisposition);
-
       final name = headerParams['name'];
       if (name == null) continue;
 
-      final bytes = await part.expand((b) => b).toList();
+      final builder = BytesBuilder(copy: false);
+      await for (final chunk in part) {
+        builder.add(chunk);
+      }
+      final bytes = builder.takeBytes();
 
       if (headerParams.containsKey('filename')) {
-        // It's a file
         final file = UploadedFile(
           name: name,
           filename: headerParams['filename'],
@@ -129,7 +127,6 @@ class Request {
         );
         files.putIfAbsent(name, () => []).add(file);
       } else {
-        // It's a regular text field
         fields[name] = utf8.decode(bytes);
       }
     }
