@@ -9,7 +9,7 @@ import 'lyzor_result.dart';
 
 part 'lyzor_context.dart';
 
-typedef Handler = FutureOr<Object?> Function(Context ctx);
+typedef Handler = FutureOr<Object?> Function();
 typedef Next = FutureOr<Object?> Function();
 typedef Middleware = FutureOr<Object?> Function(Context ctx, Next next);
 typedef Ctx = Context;
@@ -89,18 +89,18 @@ class Lyzor {
     Result result;
 
     if (error is MethodNotAllowedException) {
-      result = Results.json(
+      result = JsonResult(
         {'error': error.message, 'allowed': error.allowedMethods.toList()},
         status: HttpStatus.methodNotAllowed,
         headers: {'Allow': error.allowedMethods.join(', ')},
       );
     } else if (error is NotFoundException) {
-      result = Results.json({'error': error.message}, status: HttpStatus.notFound);
+      result = JsonResult({'error': error.message}, status: HttpStatus.notFound);
     } else if (error is HttpException) {
-      result = Results.json({'error': error.message, 'details': error.details}, status: error.statusCode);
+      result = JsonResult({'error': error.message, 'details': error.details}, status: error.statusCode);
     } else {
       print('[$method $path] Unhandled Error: $error\n$st');
-      result = Results.json({'error': 'Internal Server Error'}, status: 500);
+      result = JsonResult({'error': 'Internal Server Error'}, status: 500);
     }
 
     await result.execute(response);
@@ -109,9 +109,11 @@ class Lyzor {
   Result? _coerce(Object? v) {
     if (v == null) return null;
     if (v is Result) return v;
-    if (v is String) return Results.text(v);
-    if (v is Map || v is List || v is num || v is bool) return Results.json(v);
-    return Results.text(v.toString());
+
+    if (v is Map || v is List) return JsonResult(v);
+    if (v is String) return TextResult(v);
+
+    return TextResult(v.toString());
   }
 
   Future<void> run({String host = '127.0.0.1', int port = 8080}) async {
@@ -133,18 +135,18 @@ class Lyzor {
 
     final response = Response(rawReq.response);
     final request = Request(rawReq, pathParams: {}, maxBodySize: maxBodySize);
-    final context = Context(request, response, _registry);
+    final context = Context(request, _registry);
 
     runZoned(() async {
       try {
         final finalOutput = await _dispatch(context);
         final result = _coerce(finalOutput);
 
-        if (result != null && !context.response.isCommitted) {
-          await result.execute(context.response);
+        if (result != null && !response.isCommitted) {
+          await result.execute(response);
         }
       } catch (e, st) {
-        if (!context.response.isCommitted) {
+        if (!response.isCommitted) {
           await _handleError(rawReq, e, st, requestMethod, requestPath);
         }
       }
@@ -169,7 +171,7 @@ class Lyzor {
     final route = match.data!;
     ctx.request.pathParams = match.params;
 
-    final routePipeline = [...route.middlewares, (c, _) => route.handler(c)];
+    final routePipeline = [...route.middlewares, (c, _) => route.handler()];
     return await _executePipeline(ctx, routePipeline);
   }
 

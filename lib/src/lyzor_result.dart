@@ -4,65 +4,163 @@ import 'package:mime/mime.dart';
 import 'lyzor_response.dart';
 
 abstract class Result {
-  int get status;
-
-  Future<void> execute(Response res);
-}
-
-class JsonResult implements Result {
-  final Object data;
-
-  @override
   final int status;
   final Map<String, String> headers;
+  final List<Cookie> cookies;
 
-  JsonResult(this.data, {this.status = HttpStatus.ok, this.headers = const {}});
+  const Result({this.status = HttpStatus.ok, this.headers = const {}, this.cookies = const []});
+
+  Result withStatus(int status);
+  Result withHeader(String name, String value);
+  Result withCookie(Cookie cookie);
+
+  Result expireCookie(String name, {String path = '/'}) {
+    return withCookie(
+      Cookie(name, '')
+        ..path = path
+        ..maxAge = 0
+        ..expires = DateTime(1970),
+    );
+  }
+
+  Future<void> execute(Response res);
+
+  void applyState(Response res) {
+    res.status(status);
+    headers.forEach(res.setHeader);
+    for (var cookie in cookies) {
+      res.raw.cookies.add(cookie);
+    }
+    res.prepare();
+  }
+}
+
+class JsonResult extends Result {
+  final Object data;
+
+  const JsonResult(this.data, {super.status, super.headers, super.cookies});
+
+  @override
+  JsonResult withCookie(Cookie cookie) =>
+      JsonResult(data, status: status, headers: headers, cookies: [...cookies, cookie]);
+
+  @override
+  JsonResult withHeader(String name, String value) =>
+      JsonResult(data, status: status, headers: {...headers, name: value}, cookies: cookies);
+
+  @override
+  JsonResult withStatus(int status) => JsonResult(data, status: status, headers: headers, cookies: cookies);
 
   @override
   Future<void> execute(Response res) async {
-    res.status(status).type(ContentType.json);
+    res.status(status);
+    res.type(ContentType.json);
     headers.forEach(res.setHeader);
     res.prepare();
-
     res.raw.write(jsonEncode(data));
     await res.raw.close();
     res.markCommitted();
   }
 }
 
-class TextResult implements Result {
-  final String text;
+class TextResult extends Result {
+  final String content;
+  final ContentType? contentType;
+
+  const TextResult(this.content, {this.contentType, super.status, super.headers, super.cookies});
 
   @override
-  final int status;
-  final ContentType type;
-  final Map<String, String> headers;
+  TextResult withCookie(Cookie cookie) =>
+      TextResult(content, status: status, headers: headers, cookies: [...cookies, cookie]);
 
-  TextResult(this.text, {this.status = HttpStatus.ok, ContentType? type, this.headers = const {}})
-    : type = type ?? ContentType.text;
+  @override
+  TextResult withHeader(String name, String value) =>
+      TextResult(content, status: status, headers: {...headers, name: value}, cookies: cookies);
+
+  @override
+  TextResult withStatus(int status) => TextResult(content, status: status, headers: headers, cookies: cookies);
 
   @override
   Future<void> execute(Response res) async {
-    res.status(status).type(type);
+    res.status(status);
+    res.type(contentType ?? ContentType.text);
     headers.forEach(res.setHeader);
     res.prepare();
-
-    res.raw.write(text);
+    res.raw.write(content);
     await res.raw.close();
     res.markCommitted();
   }
 }
 
-class FileResult implements Result {
-  final File file;
-
-  final int? _status;
-  final ContentType? type;
+class HtmlResult extends TextResult {
+  const HtmlResult(super.content, {super.status, super.headers, super.cookies}) : super(contentType: null);
 
   @override
-  int get status => _status ?? HttpStatus.ok;
+  HtmlResult withCookie(Cookie cookie) =>
+      HtmlResult(content, status: status, headers: headers, cookies: [...cookies, cookie]);
 
-  FileResult(this.file, {int? status, this.type}) : _status = status;
+  @override
+  HtmlResult withHeader(String name, String value) =>
+      HtmlResult(content, status: status, headers: {...headers, name: value}, cookies: cookies);
+
+  @override
+  HtmlResult withStatus(int status) => HtmlResult(content, status: status, headers: headers, cookies: cookies);
+
+  @override
+  Future<void> execute(Response res) async {
+    res.status(status);
+    res.type(ContentType.html);
+    headers.forEach(res.setHeader);
+    res.prepare();
+    res.raw.write(content);
+    await res.raw.close();
+    res.markCommitted();
+  }
+}
+
+class RedirectResult extends Result {
+  final String url;
+
+  const RedirectResult(this.url, {super.status = HttpStatus.found, super.headers, super.cookies});
+
+  @override
+  RedirectResult withCookie(Cookie cookie) =>
+      RedirectResult(url, status: status, headers: headers, cookies: [...cookies, cookie]);
+
+  @override
+  RedirectResult withHeader(String name, String value) =>
+      RedirectResult(url, status: status, headers: {...headers, name: value}, cookies: cookies);
+
+  @override
+  RedirectResult withStatus(int status) => RedirectResult(url, status: status, headers: headers, cookies: cookies);
+
+  @override
+  Future<void> execute(Response res) async {
+    res.status(status);
+    res.setHeader(HttpHeaders.locationHeader, url);
+    headers.forEach(res.setHeader);
+    res.prepare();
+    await res.raw.close();
+    res.markCommitted();
+  }
+}
+
+class FileResult extends Result {
+  final File file;
+  final ContentType? contentType;
+
+  const FileResult(this.file, {this.contentType, super.status, super.headers, super.cookies});
+
+  @override
+  FileResult withCookie(Cookie cookie) =>
+      FileResult(file, status: status, headers: headers, cookies: [...cookies, cookie]);
+
+  @override
+  FileResult withHeader(String name, String value) =>
+      FileResult(file, status: status, headers: {...headers, name: value}, cookies: cookies);
+
+  @override
+  FileResult withStatus(int status) => FileResult(file, status: status, headers: headers, cookies: cookies);
 
   @override
   Future<void> execute(Response res) async {
@@ -71,44 +169,15 @@ class FileResult implements Result {
       return;
     }
 
-    final resolvedType = type ?? ContentType.parse(lookupMimeType(file.path) ?? 'application/octet-stream');
+    final mimeType = contentType ?? ContentType.parse(lookupMimeType(file.path) ?? 'application/octet-stream');
 
-    res.status(status).type(resolvedType);
+    res.status(status);
+    res.type(mimeType);
     res.setHeader('X-Content-Type-Options', 'nosniff');
+    headers.forEach(res.setHeader);
     res.prepare();
 
     await file.openRead().pipe(res.raw);
     res.markCommitted();
   }
-}
-
-class RedirectResult implements Result {
-  final String url;
-
-  @override
-  final int status;
-
-  RedirectResult(this.url, {this.status = HttpStatus.found});
-
-  @override
-  Future<void> execute(Response res) async {
-    res.status(status);
-    res.setHeader(HttpHeaders.locationHeader, url);
-    res.prepare();
-    await res.raw.close();
-    res.markCommitted();
-  }
-}
-
-// Shortcut Factory
-class Results {
-  static Result json(Object data, {int status = HttpStatus.ok, Map<String, String> headers = const {}}) =>
-      JsonResult(data, status: status, headers: headers);
-
-  static Result text(String text, {int status = HttpStatus.ok, ContentType? type}) =>
-      TextResult(text, status: status, type: type);
-
-  static Result file(File file, {int? status, ContentType? type}) => FileResult(file, status: status, type: type);
-
-  static Result redirect(String url, {int status = HttpStatus.found}) => RedirectResult(url, status: status);
 }

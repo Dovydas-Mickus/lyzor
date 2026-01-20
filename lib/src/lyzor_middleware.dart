@@ -1,5 +1,4 @@
 import 'package:lyzor/lyzor.dart';
-import 'package:lyzor/src/lyzor_validator.dart';
 
 Middleware recovery() {
   return (ctx, next) async {
@@ -9,12 +8,12 @@ Middleware recovery() {
       if (e is HttpException) {
         print('[HTTP ${e.statusCode}] ${ctx.method} ${ctx.uri.path} - ${e.message}');
 
-        return Results.json({'error': e.message, if (e.details != null) 'details': e.details}, status: e.statusCode);
+        return JsonResult({'error': e.message, if (e.details != null) 'details': e.details}, status: e.statusCode);
       }
 
       print('[Recovery] Unhandled Error: $e\n$st');
 
-      return Results.json({'error': 'Internal Server Error'}, status: 500);
+      return JsonResult({'error': 'Internal Server Error'}, status: 500);
     }
   };
 }
@@ -25,7 +24,7 @@ Middleware logger() {
     final out = await next();
     sw.stop();
 
-    int status = (out is Result) ? out.status : ctx.response.statusCode;
+    int status = (out is Result) ? out.status : 200;
     print('${ctx.method} ${ctx.uri.path} | $status | ${sw.elapsedMilliseconds}ms');
 
     return out;
@@ -40,14 +39,14 @@ Middleware validateBody(Validator validator) {
       final errors = validator.validate(body);
 
       if (errors.isNotEmpty) {
-        return Results.json({'error': 'Validation Failed', 'details': errors}, status: 400);
+        return JsonResult({'error': 'Validation Failed', 'details': errors}, status: 400);
       }
 
       return await next();
     } on HttpException catch (_) {
       rethrow;
     } catch (e) {
-      return Results.json({'error': 'Invalid JSON body'}, status: 400);
+      return JsonResult({'error': 'Invalid JSON body'}, status: 400);
     }
   };
 }
@@ -56,7 +55,7 @@ Middleware validateQuery(Validator validator) {
   return (ctx, next) async {
     final errors = validator.validate(ctx.queryParams);
     if (errors.isNotEmpty) {
-      return Results.json({'error': 'Invalid query parameters', 'details': errors}, status: 400);
+      return JsonResult({'error': 'Invalid query parameters', 'details': errors}, status: 400);
     }
     return await next();
   };
