@@ -181,3 +181,21 @@ class FileResult extends Result {
     res.markCommitted();
   }
 }
+
+class NotModified extends Result {
+  const NotModified({super.headers, super.cookies}) : super(status: 304);
+
+  @override
+  NotModified withStatus(int status) => this; // Status is fixed at 304
+  @override
+  NotModified withHeader(String name, String value) =>
+      NotModified(headers: {...headers, name: value}, cookies: cookies);
+  @override
+  NotModified withCookie(Cookie cookie) => NotModified(headers: headers, cookies: [...cookies, cookie]);
+
+  @override
+  Future<void> execute(Response res) async {
+    applyState(res);
+    res.markCommitted();
+  }
+}
