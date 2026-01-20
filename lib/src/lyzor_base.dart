@@ -116,9 +116,9 @@ class Lyzor {
     return TextResult(v.toString());
   }
 
-  Future<void> run({String host = '127.0.0.1', int port = 8080}) async {
+  Future<void> run({String host = '127.0.0.1', int port = 8080, bool shared = false}) async {
     try {
-      _server = await HttpServer.bind(host, port);
+      _server = await HttpServer.bind(host, port, shared: shared);
       print('Server running at http://$host:$port/');
 
       await for (final rawReq in _server) {
