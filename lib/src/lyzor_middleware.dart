@@ -1,4 +1,11 @@
-import 'package:lyzor/lyzor.dart';
+import 'dart:async';
+
+import 'package:lyzor/src/lyzor_base.dart';
+import 'package:lyzor/src/lyzor_exceptions.dart';
+import 'package:lyzor/src/lyzor_result.dart';
+import 'package:lyzor/src/lyzor_validator.dart';
+
+typedef Middleware = FutureOr<Object?> Function(Context ctx, Next next);
 
 Middleware recovery() {
   return (ctx, next) async {

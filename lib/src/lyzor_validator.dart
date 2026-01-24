@@ -1,3 +1,5 @@
+import 'package:email_validator/email_validator.dart';
+
 typedef ValidationRule = String? Function(dynamic value);
 
 class Validator {
@@ -28,8 +30,8 @@ class Rules {
 
   static ValidationRule isEmail([String msg = 'Invalid email address']) => (v) {
     if (v == null || v is! String) return null;
-    final emailRegex = RegExp(r'^[\w-.]+@([\w-]+\.)+[\w-]{2,4}$');
-    return emailRegex.hasMatch(v) ? null : msg;
+    final isValid = EmailValidator.validate(v);
+    return isValid ? null : msg;
   };
 
   static ValidationRule minLength(int min, [String? msg]) => (v) {

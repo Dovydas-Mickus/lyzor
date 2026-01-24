@@ -1,48 +1,28 @@
+import 'package:lyzor/src/lyzor_middleware.dart';
+import 'package:lyzor/src/models/router/node.dart';
+import 'package:lyzor/src/models/router/route.dart';
+import 'package:lyzor/src/models/router/search_result.dart';
+import 'package:lyzor/src/utils/router/router_helper.dart';
+
 import 'lyzor_base.dart';
 
-class Route {
-  final Handler handler;
-  final List<Middleware> middlewares;
-  final String method;
-
-  Route use(Middleware middleware) {
-    middlewares.add(middleware);
-    return this;
-  }
-
-  Route(this.method, this.handler, this.middlewares);
-}
-
-class _Node {
-  final Map<String, _Node> staticChildren = {};
-
-  _Node? paramChild;
-  String? paramName;
-
-  _Node? wildcardChild;
-
-  final Map<String, Route> routes = {};
-
-  bool get isLeaf => routes.isNotEmpty;
-}
-
 class Router {
-  final _Node _root = _Node();
+  final Node _root = Node();
 
-  Route addRoute(String method, String path, Handler handler, List<Middleware> middlewares) {
-    _Node current = _root;
-    final segments = _splitPath(path);
+  Route _addRoute(String method, String path, Handler handler, List<Middleware> middlewares) {
+    Node current = _root;
+    final segments = RouterHelper.splitPath(path);
 
     for (final segment in segments) {
       if (segment.startsWith(':')) {
-        current.paramChild ??= _Node();
+        current.paramChild ??= Node();
         current.paramName = segment.substring(1);
         current = current.paramChild!;
       } else if (segment == '*') {
-        current.wildcardChild ??= _Node();
+        current.wildcardChild ??= Node();
         current = current.wildcardChild!;
       } else {
-        current = current.staticChildren.putIfAbsent(segment, () => _Node());
+        current = current.staticChildren.putIfAbsent(segment, () => Node());
       }
     }
 
@@ -53,56 +33,9 @@ class Router {
     return route;
   }
 
-  _SearchResult? lookup(String method, String path) {
-    _Node current = _root;
-    final segments = _splitPath(path);
-    final Map<String, String> params = {};
+  SearchResult? lookup(String method, String path) => RouterHelper.lookup(method, path, _root);
 
-    for (int i = 0; i < segments.length; i++) {
-      final segment = segments[i];
-
-      if (current.staticChildren.containsKey(segment)) {
-        current = current.staticChildren[segment]!;
-      } else if (current.paramChild != null) {
-        params[current.paramName!] = segment;
-        current = current.paramChild!;
-      } else if (current.wildcardChild != null) {
-        params['*'] = segments.sublist(i).join('/');
-        current = current.wildcardChild!;
-        break;
-      } else {
-        return null;
-      }
-    }
-
-    final routeData = current.routes[method];
-
-    if (routeData == null) {
-      if (current.routes.isNotEmpty) {
-        return _SearchResult(null, params, isMethodNotAllowed: true, allowedMethods: current.routes.keys.toSet());
-      }
-
-      if (current.wildcardChild != null && current.wildcardChild!.routes.containsKey(method)) {
-        params['*'] = '';
-        return _SearchResult(current.wildcardChild!.routes[method], params);
-      }
-
-      return null;
-    }
-
-    return _SearchResult(routeData, params);
+  Route addRoute(String method, String path, Handler handler, List<Middleware> routeMiddlewares) {
+    return _addRoute(method, path, handler, routeMiddlewares);
   }
-
-  List<String> _splitPath(String path) {
-    return path.split('/').where((s) => s.isNotEmpty).toList();
-  }
-}
-
-class _SearchResult {
-  final Route? data;
-  final Map<String, String> params;
-  final bool isMethodNotAllowed;
-  final Set<String> allowedMethods;
-
-  _SearchResult(this.data, this.params, {this.isMethodNotAllowed = false, this.allowedMethods = const {}});
 }

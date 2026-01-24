@@ -1,79 +1,25 @@
 import 'dart:async';
 import 'dart:io';
 import 'dart:isolate';
+import 'package:lyzor/src/lyzor_middleware.dart';
 import 'package:lyzor/src/lyzor_registry.dart';
 import 'package:lyzor/src/lyzor_request.dart';
 import 'package:lyzor/src/lyzor_router.dart';
+import 'package:lyzor/src/models/base/route_definition.dart';
+import 'package:lyzor/src/utils/base/base_helper.dart';
 import 'lyzor_exceptions.dart';
 import 'package:lyzor/src/lyzor_response.dart';
-import 'lyzor_result.dart';
+import 'models/base/route_group.dart';
 
 part 'lyzor_context.dart';
 
 typedef Handler = FutureOr<Object?> Function();
 typedef Next = FutureOr<Object?> Function();
-typedef Middleware = FutureOr<Object?> Function(Context ctx, Next next);
 typedef Ctx = Context;
 typedef AppBuilder = Lyzor Function();
 
-class RouteDefinition {
-  final Lyzor _api;
-  final String _path;
-  final List<Middleware> _middlewares = [];
-
-  RouteDefinition(this._api, this._path);
-
-  RouteDefinition use(Middleware middleware) {
-    _middlewares.add(middleware);
-    return this;
-  }
-
-  Route get(Handler handler) => _api._addRoute('GET', _path, handler, _middlewares);
-  Route post(Handler handler) => _api._addRoute('POST', _path, handler, _middlewares);
-  Route put(Handler handler) => _api._addRoute('PUT', _path, handler, _middlewares);
-  Route patch(Handler handler) => _api._addRoute('PATCH', _path, handler, _middlewares);
-  Route delete(Handler handler) => _api._addRoute('DELETE', _path, handler, _middlewares);
-  Route head(Handler handler) => _api._addRoute('HEAD', _path, handler, _middlewares);
-  Route options(Handler handler) => _api._addRoute('OPTIONS', _path, handler, _middlewares);
-
-  void all(Handler handler) {
-    get(handler);
-    post(handler);
-    put(handler);
-    patch(handler);
-    delete(handler);
-    head(handler);
-    options(handler);
-  }
-}
-
 abstract class Controller {
   void registerRoutes(Lyzor app);
-}
-
-class RouteGroup {
-  final Lyzor _api;
-  final String _prefix;
-  final List<Middleware> _groupMiddlewares = [];
-
-  RouteGroup(this._api, this._prefix);
-
-  RouteGroup use(Middleware middleware) {
-    _groupMiddlewares.add(middleware);
-    return this;
-  }
-
-  RouteDefinition route(String path) {
-    final fullPath = '$_prefix/$path'.replaceAll('//', '/');
-
-    final def = RouteDefinition(_api, fullPath);
-
-    for (var m in _groupMiddlewares) {
-      def.use(m);
-    }
-
-    return def;
-  }
 }
 
 class Lyzor {
@@ -103,44 +49,12 @@ class Lyzor {
     return this;
   }
 
+  RouteGroup group(String prefix) {
+    return RouteGroup(_router, prefix);
+  }
+
   RouteDefinition route(String path) {
-    return RouteDefinition(this, path);
-  }
-
-  Route _addRoute(String method, String path, Handler handler, List<Middleware> routeMiddlewares) {
-    return _router.addRoute(method, path, handler, routeMiddlewares);
-  }
-
-  Future<void> _handleError(HttpRequest rawReq, Object error, StackTrace st, String method, String path) async {
-    final response = Response(rawReq.response);
-    Result result;
-
-    if (error is MethodNotAllowedException) {
-      result = JsonResult(
-        {'error': error.message, 'allowed': error.allowedMethods.toList()},
-        status: HttpStatus.methodNotAllowed,
-        headers: {'Allow': error.allowedMethods.join(', ')},
-      );
-    } else if (error is NotFoundException) {
-      result = JsonResult({'error': error.message}, status: HttpStatus.notFound);
-    } else if (error is HttpException) {
-      result = JsonResult({'error': error.message, 'details': error.details}, status: error.statusCode);
-    } else {
-      print('[$method $path] Unhandled Error: $error\n$st');
-      result = JsonResult({'error': 'Internal Server Error'}, status: 500);
-    }
-
-    await result.execute(response);
-  }
-
-  Result? _coerce(Object? v) {
-    if (v == null) return null;
-    if (v is Result) return v;
-
-    if (v is Map || v is List) return JsonResult(v);
-    if (v is String) return TextResult(v);
-
-    return TextResult(v.toString());
+    return RouteDefinition(_router, path);
   }
 
   Future<void> run({String host = '127.0.0.1', int port = 8080, bool shared = false}) async {
@@ -167,14 +81,14 @@ class Lyzor {
     runZoned(() async {
       try {
         final finalOutput = await _dispatch(context);
-        final result = _coerce(finalOutput);
+        final result = BaseHelper.coerce(finalOutput);
 
         if (result != null && !response.isCommitted) {
           await result.execute(response);
         }
       } catch (e, st) {
         if (!response.isCommitted) {
-          await _handleError(rawReq, e, st, requestMethod, requestPath);
+          await BaseHelper.handleError(rawReq, e, st, requestMethod, requestPath);
         }
       }
     }, zoneValues: {#lyzor_context: context});
@@ -182,7 +96,7 @@ class Lyzor {
 
   Future<Object?> _dispatch(Context ctx, [int index = 0]) async {
     if (index < _globalMiddlewares.length) {
-      return _coerce(await _globalMiddlewares[index](ctx, () => _dispatch(ctx, index + 1)));
+      return BaseHelper.coerce(await _globalMiddlewares[index](ctx, () => _dispatch(ctx, index + 1)));
     }
 
     final match = _router.lookup(ctx.method, ctx.uri.path);
@@ -192,20 +106,14 @@ class Lyzor {
     }
 
     if (match.isMethodNotAllowed) {
-      throw MethodNotAllowedException(ctx.method, ctx.uri.path, match.allowedMethods);
+      throw MethodNotAllowedException(ctx.method, ctx.uri.path, allowedMethods: match.allowedMethods);
     }
 
     final route = match.data!;
     ctx.request.pathParams = match.params;
 
     final routePipeline = [...route.middlewares, (c, _) => route.handler()];
-    return await _executePipeline(ctx, routePipeline);
-  }
-
-  Future<Object?> _executePipeline(Context ctx, List<Middleware> pipeline, [int index = 0]) async {
-    if (index >= pipeline.length) return null;
-
-    return _coerce(await pipeline[index](ctx, () => _executePipeline(ctx, pipeline, index + 1)));
+    return await BaseHelper.executePipeline(ctx, routePipeline);
   }
 
   static Future<void> spawn(AppBuilder builder, {int count = 0, String host = '127.0.0.1', int port = 8080}) async {
@@ -228,11 +136,5 @@ class Lyzor {
     final app = builder();
 
     await app.run(host: host, port: port, shared: true);
-  }
-}
-
-extension LyzorGroups on Lyzor {
-  RouteGroup group(String prefix) {
-    return RouteGroup(this, prefix);
   }
 }
