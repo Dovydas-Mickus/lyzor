@@ -182,20 +182,43 @@ class FileResult extends Result {
   }
 }
 
-class NotModified extends Result {
-  const NotModified({super.headers, super.cookies}) : super(status: 304);
+class NotModifiedResult extends Result {
+  const NotModifiedResult({super.headers, super.cookies}) : super(status: 304);
 
   @override
-  NotModified withStatus(int status) => this; // Status is fixed at 304
+  NotModifiedResult withStatus(int status) => this; // Status is fixed at 304
   @override
-  NotModified withHeader(String name, String value) =>
-      NotModified(headers: {...headers, name: value}, cookies: cookies);
+  NotModifiedResult withHeader(String name, String value) =>
+      NotModifiedResult(headers: {...headers, name: value}, cookies: cookies);
   @override
-  NotModified withCookie(Cookie cookie) => NotModified(headers: headers, cookies: [...cookies, cookie]);
+  NotModifiedResult withCookie(Cookie cookie) => NotModifiedResult(headers: headers, cookies: [...cookies, cookie]);
 
   @override
   Future<void> execute(Response res) async {
     applyState(res);
+    res.markCommitted();
+  }
+}
+
+class StatusResult extends Result {
+  /// Default to 204 No Content as it's the most common "empty" success status
+  const StatusResult({super.status = HttpStatus.noContent, super.headers, super.cookies});
+
+  @override
+  StatusResult withStatus(int status) => StatusResult(status: status, headers: headers, cookies: cookies);
+
+  @override
+  StatusResult withHeader(String name, String value) =>
+      StatusResult(status: status, headers: {...headers, name: value}, cookies: cookies);
+
+  @override
+  StatusResult withCookie(Cookie cookie) =>
+      StatusResult(status: status, headers: headers, cookies: [...cookies, cookie]);
+
+  @override
+  Future<void> execute(Response res) async {
+    applyState(res); // Sets status, headers, and cookies
+    await res.raw.close();
     res.markCommitted();
   }
 }

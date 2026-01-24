@@ -49,7 +49,7 @@ extension LyzorStatic on Lyzor {
 
     final clientEtag = ctx.headers.value(HttpHeaders.ifNoneMatchHeader);
     if (clientEtag == etag) {
-      return const NotModified();
+      return const NotModifiedResult();
     }
 
     return FileResult(
