@@ -6,8 +6,13 @@ import 'package:lyzor/src/lyzor_response.dart';
 import 'package:lyzor/src/lyzor_result.dart';
 
 class BaseHelper {
-  static Future<void> handleError(HttpRequest rawReq, Object error, StackTrace st, String method, String path) async {
-    final response = Response(rawReq.response);
+  static Future<void> handleError(
+    Response response,
+    Object error,
+    StackTrace st,
+    String method,
+    String path,
+  ) async {
     JsonResult result;
 
     if (error is MethodNotAllowedException) {

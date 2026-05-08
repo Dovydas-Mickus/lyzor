@@ -1,10 +1,18 @@
+import 'dart:convert' show HtmlEscape;
 import 'dart:io';
 
 import 'package:lyzor/lyzor.dart';
 import 'package:path/path.dart' as p;
 
+const _htmlEscape = HtmlEscape();
+
 extension LyzorStatic on Lyzor {
-  void static(String routePath, String fileSystemPath, {bool listDirectories = true}) {
+  void static(
+    String routePath,
+    String fileSystemPath, {
+    bool listDirectories = false,
+    String cacheControl = 'public, max-age=3600',
+  }) {
     final absoluteRoot = p.canonicalize(Directory(fileSystemPath).absolute.path);
 
     final prefix = routePath.endsWith('/') ? routePath.substring(0, routePath.length - 1) : routePath;
@@ -16,11 +24,9 @@ extension LyzorStatic on Lyzor {
 
       final fullPath = p.canonicalize(p.join(absoluteRoot, subPath));
 
-      if (!fullPath.startsWith(absoluteRoot)) {
+      if (!fullPath.startsWith(absoluteRoot + p.separator) && fullPath != absoluteRoot) {
         return const JsonResult({'error': 'Forbidden'}, status: 403);
       }
-
-      final entity = File(fullPath);
 
       if (await FileSystemEntity.isDirectory(fullPath)) {
         if (!ctx.uri.path.endsWith('/')) {
@@ -29,21 +35,27 @@ extension LyzorStatic on Lyzor {
 
         final indexFile = File(p.join(fullPath, 'index.html'));
         if (await indexFile.exists()) {
-          return _serveFile(ctx, indexFile);
+          return _serveFile(ctx, indexFile, cacheControl);
         }
 
-        return const TextResult('Directory Listing Forbidden', status: 403);
+        if (!listDirectories) {
+          return const TextResult('Directory Listing Forbidden', status: 403);
+        }
+
+        return _listDirectory(fullPath, ctx.uri.path);
       }
 
+      final entity = File(fullPath);
+
       if (await entity.exists()) {
-        return _serveFile(ctx, entity);
+        return _serveFile(ctx, entity, cacheControl);
       }
 
       return const TextResult('File Not Found', status: 404);
     });
   }
 
-  Future<Result> _serveFile(Context ctx, File file) async {
+  Future<Result> _serveFile(Context ctx, File file, String cacheControl) async {
     final stat = await file.stat();
     final etag = '"${stat.changed.millisecondsSinceEpoch}-${stat.size}"';
 
@@ -52,8 +64,32 @@ extension LyzorStatic on Lyzor {
       return const NotModifiedResult();
     }
 
-    return FileResult(
-      file,
-    ).withHeader(HttpHeaders.etagHeader, etag).withHeader(HttpHeaders.cacheControlHeader, 'public, max-age=3600');
+    return FileResult(file)
+        .withHeader(HttpHeaders.etagHeader, etag)
+        .withHeader(HttpHeaders.cacheControlHeader, cacheControl);
+  }
+
+  Future<Result> _listDirectory(String dirPath, String uriPath) async {
+    final entities = await Directory(dirPath).list().toList()
+      ..sort((a, b) => p.basename(a.path).compareTo(p.basename(b.path)));
+
+    final sb = StringBuffer()
+      ..write('<!DOCTYPE html><html><body>')
+      ..write('<h1>Index of ${_htmlEscape.convert(uriPath)}</h1><ul>');
+
+    if (uriPath != '/') {
+      sb.write('<li><a href="../">../</a></li>');
+    }
+
+    for (final entity in entities) {
+      final name = p.basename(entity.path);
+      final isDir = entity is Directory;
+      final href = Uri.encodeComponent(name);
+      final display = _htmlEscape.convert(name);
+      sb.write('<li><a href="$href${isDir ? '/' : ''}">$display${isDir ? '/' : ''}</a></li>');
+    }
+
+    sb.write('</ul></body></html>');
+    return HtmlResult(sb.toString());
   }
 }

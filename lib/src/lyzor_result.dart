@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:io';
 import 'package:mime/mime.dart';
+
 import 'lyzor_response.dart';
 
 abstract class Result {
@@ -53,10 +54,8 @@ class JsonResult extends Result {
 
   @override
   Future<void> execute(Response res) async {
-    res.status(status);
+    applyState(res);
     res.type(ContentType.json);
-    headers.forEach(res.setHeader);
-    res.prepare();
     res.raw.write(jsonEncode(data));
     await res.raw.close();
     res.markCommitted();
@@ -82,10 +81,8 @@ class TextResult extends Result {
 
   @override
   Future<void> execute(Response res) async {
-    res.status(status);
+    applyState(res);
     res.type(contentType ?? ContentType.text);
-    headers.forEach(res.setHeader);
-    res.prepare();
     res.raw.write(content);
     await res.raw.close();
     res.markCommitted();
@@ -108,10 +105,32 @@ class HtmlResult extends TextResult {
 
   @override
   Future<void> execute(Response res) async {
-    res.status(status);
+    applyState(res);
     res.type(ContentType.html);
-    headers.forEach(res.setHeader);
-    res.prepare();
+    res.raw.write(content);
+    await res.raw.close();
+    res.markCommitted();
+  }
+}
+
+class XmlResult extends TextResult {
+  const XmlResult(super.content, {super.status, super.headers, super.cookies}) : super(contentType: null);
+
+  @override
+  XmlResult withCookie(Cookie cookie) =>
+      XmlResult(content, status: status, headers: headers, cookies: [...cookies, cookie]);
+
+  @override
+  XmlResult withHeader(String name, String value) =>
+      XmlResult(content, status: status, headers: {...headers, name: value}, cookies: cookies);
+
+  @override
+  XmlResult withStatus(int status) => XmlResult(content, status: status, headers: headers, cookies: cookies);
+
+  @override
+  Future<void> execute(Response res) async {
+    applyState(res);
+    res.type(ContentType('application', 'xml', charset: 'utf-8'));
     res.raw.write(content);
     await res.raw.close();
     res.markCommitted();
@@ -136,10 +155,8 @@ class RedirectResult extends Result {
 
   @override
   Future<void> execute(Response res) async {
-    res.status(status);
+    applyState(res);
     res.setHeader(HttpHeaders.locationHeader, url);
-    headers.forEach(res.setHeader);
-    res.prepare();
     await res.raw.close();
     res.markCommitted();
   }
@@ -170,13 +187,9 @@ class FileResult extends Result {
     }
 
     final mimeType = contentType ?? ContentType.parse(lookupMimeType(file.path) ?? 'application/octet-stream');
-
-    res.status(status);
+    applyState(res);
     res.type(mimeType);
     res.setHeader('X-Content-Type-Options', 'nosniff');
-    headers.forEach(res.setHeader);
-    res.prepare();
-
     await file.openRead().pipe(res.raw);
     res.markCommitted();
   }
@@ -196,6 +209,7 @@ class NotModifiedResult extends Result {
   @override
   Future<void> execute(Response res) async {
     applyState(res);
+    await res.raw.close();
     res.markCommitted();
   }
 }
@@ -217,7 +231,7 @@ class StatusResult extends Result {
 
   @override
   Future<void> execute(Response res) async {
-    applyState(res); // Sets status, headers, and cookies
+    applyState(res);
     await res.raw.close();
     res.markCommitted();
   }

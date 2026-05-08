@@ -1,9 +1,9 @@
 import 'dart:convert';
 import 'dart:io';
-import 'package:lyzor/src/lyzor_exceptions.dart';
-import 'package:lyzor/src/models/request/form_data.dart';
-import 'package:lyzor/src/utils/request/multipart_parser.dart';
-import 'package:lyzor/src/utils/request/request_body.dart';
+
+import '../lyzor.dart';
+import 'utils/request/multipart_parser.dart';
+import 'utils/request/request_body.dart';
 
 class Request {
   final HttpRequest raw;
@@ -21,6 +21,16 @@ class Request {
   Map<String, String> get queryParams => uri.queryParameters;
   HttpHeaders get headers => raw.headers;
   String get ip => raw.connectionInfo?.remoteAddress.address ?? 'unknown';
+
+  /// Returns the real client IP, reading X-Forwarded-For only when the
+  /// direct connection IP is in [trustedProxies].
+  String realIp({List<String> trustedProxies = const []}) {
+    final direct = ip;
+    if (trustedProxies.isEmpty || !trustedProxies.contains(direct)) return direct;
+    final forwarded = raw.headers.value('X-Forwarded-For');
+    if (forwarded == null) return direct;
+    return forwarded.split(',').first.trim();
+  }
   Map<String, String> get cookies => {for (final c in raw.cookies) c.name: c.value};
 
   Future<String> get body async {
@@ -55,6 +65,7 @@ class Request {
     final boundary = contentType.parameters['boundary'];
     if (boundary == null) throw BadRequestException('Missing boundary');
 
-    return _formDataCache = await MultipartParser.parse(raw, boundary, maxFiles: maxFiles, maxFields: maxFields);
+    final stream = RequestBody.limitedStream(raw, maxBodySize);
+    return _formDataCache = await MultipartParser.parse(stream, boundary, maxFiles: maxFiles, maxFields: maxFields);
   }
 }

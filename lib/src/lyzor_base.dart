@@ -1,20 +1,22 @@
 import 'dart:async';
 import 'dart:io';
 import 'dart:isolate';
-import 'package:lyzor/src/lyzor_middleware.dart';
-import 'package:lyzor/src/lyzor_registry.dart';
-import 'package:lyzor/src/lyzor_request.dart';
-import 'package:lyzor/src/lyzor_router.dart';
-import 'package:lyzor/src/models/base/route_definition.dart';
-import 'package:lyzor/src/utils/base/base_helper.dart';
+import '../lyzor.dart';
 import 'lyzor_exceptions.dart';
-import 'package:lyzor/src/lyzor_response.dart';
+import 'lyzor_registry.dart';
+import 'lyzor_request.dart';
+import 'lyzor_response.dart';
+import 'lyzor_router.dart';
+import 'models/base/route_definition.dart';
 import 'models/base/route_group.dart';
+import 'utils/base/base_helper.dart';
 
 part 'lyzor_context.dart';
 
 typedef Handler = FutureOr<Object?> Function();
+
 typedef Next = FutureOr<Object?> Function();
+
 typedef Ctx = Context;
 typedef AppBuilder = Lyzor Function();
 
@@ -28,6 +30,11 @@ class Lyzor {
   final List<Middleware> _globalMiddlewares = [];
   final Registry _registry = Registry();
   int maxBodySize = 10 * 1024 * 1024;
+  Duration? requestTimeout;
+  bool poweredBy = true;
+
+  int _activeRequests = 0;
+  Completer<void>? _drainCompleter;
 
   Lyzor();
 
@@ -70,28 +77,53 @@ class Lyzor {
     }
   }
 
+  /// Stops accepting new connections and waits for in-flight requests to finish.
+  Future<void> close() async {
+    await _server.close();
+    if (_activeRequests > 0) {
+      _drainCompleter = Completer<void>();
+      await _drainCompleter!.future;
+    }
+  }
+
   Future<void> _handleRequest(HttpRequest rawReq) async {
+    _activeRequests++;
     final requestMethod = rawReq.method;
     final requestPath = rawReq.uri.path;
 
-    final response = Response(rawReq.response);
+    final response = Response(rawReq.response, poweredBy: poweredBy);
     final request = Request(rawReq, pathParams: {}, maxBodySize: maxBodySize);
     final context = Context(request, _registry);
 
-    runZoned(() async {
-      try {
-        final finalOutput = await _dispatch(context);
-        final result = BaseHelper.coerce(finalOutput);
+    try {
+      await runZoned(() async {
+        try {
+          final timeout = requestTimeout;
+          Future<Object?> dispatchFuture = _dispatch(context);
+          if (timeout != null) {
+            dispatchFuture = dispatchFuture.timeout(
+              timeout,
+              onTimeout: () => throw RequestTimeoutException(),
+            );
+          }
+          final finalOutput = await dispatchFuture;
+          final result = BaseHelper.coerce(finalOutput);
 
-        if (result != null && !response.isCommitted) {
-          await result.execute(response);
+          if (result != null && !response.isCommitted) {
+            await result.execute(response);
+          }
+        } catch (e, st) {
+          if (!response.isCommitted) {
+            await BaseHelper.handleError(response, e, st, requestMethod, requestPath);
+          }
         }
-      } catch (e, st) {
-        if (!response.isCommitted) {
-          await BaseHelper.handleError(rawReq, e, st, requestMethod, requestPath);
-        }
+      }, zoneValues: {#lyzor_context: context});
+    } finally {
+      _activeRequests--;
+      if (_activeRequests == 0 && _drainCompleter != null && !_drainCompleter!.isCompleted) {
+        _drainCompleter!.complete();
       }
-    }, zoneValues: {#lyzor_context: context});
+    }
   }
 
   Future<Object?> _dispatch(Context ctx, [int index = 0]) async {
@@ -116,19 +148,34 @@ class Lyzor {
     return await BaseHelper.executePipeline(ctx, routePipeline);
   }
 
-  static Future<void> spawn(AppBuilder builder, {int count = 0, String host = '127.0.0.1', int port = 8080}) async {
+  static Future<void> spawn(
+    AppBuilder builder, {
+    int count = 0,
+    String host = '127.0.0.1',
+    int port = 8080,
+  }) async {
     final workers = count <= 0 ? Platform.numberOfProcessors : count;
 
     print('Starting $workers workers on http://$host:$port');
 
-    for (int i = 0; i < workers; i++) {
-      Isolate.spawn(_startWorker, {'builder': builder, 'host': host, 'port': port});
-    }
+    final isolates = await Future.wait([
+      for (int i = 0; i < workers; i++)
+        Isolate.spawn(_startWorker, {'builder': builder, 'host': host, 'port': port}),
+    ]);
 
-    await ProcessSignal.sigint.watch().first;
+    final signals = <Future<ProcessSignal>>[ProcessSignal.sigint.watch().first];
+    if (!Platform.isWindows) {
+      signals.add(ProcessSignal.sigterm.watch().first);
+    }
+    await Future.any(signals);
+
+    print('\nShutting down...');
+    for (final isolate in isolates) {
+      isolate.kill(priority: Isolate.beforeNextEvent);
+    }
   }
 
-  static void _startWorker(Map<String, dynamic> message) async {
+  static Future<void> _startWorker(Map<String, dynamic> message) async {
     final AppBuilder builder = message['builder'];
     final String host = message['host'];
     final int port = message['port'];

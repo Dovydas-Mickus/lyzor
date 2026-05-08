@@ -5,6 +5,15 @@ import 'dart:typed_data';
 import 'package:lyzor/lyzor.dart';
 
 class RequestBody {
+  static Stream<List<int>> limitedStream(Stream<List<int>> source, int maxBytes) async* {
+    int received = 0;
+    await for (final chunk in source) {
+      received += chunk.length;
+      if (received > maxBytes) throw ContentTooLargeException();
+      yield chunk;
+    }
+  }
+
   static Future<String> getBody(HttpRequest raw, int maxBodySize) async {
     if (raw.contentLength > maxBodySize) throw ContentTooLargeException();
 

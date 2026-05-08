@@ -1,9 +1,10 @@
 import 'dart:async';
+import 'dart:convert' show base64Url;
+import 'dart:io' show Cookie;
+import 'dart:math' show Random;
 
-import 'package:lyzor/src/lyzor_base.dart';
-import 'package:lyzor/src/lyzor_exceptions.dart';
-import 'package:lyzor/src/lyzor_result.dart';
-import 'package:lyzor/src/lyzor_validator.dart';
+import '../lyzor.dart';
+import 'lyzor_base.dart';
 
 typedef Middleware = FutureOr<Object?> Function(Context ctx, Next next);
 
@@ -25,14 +26,17 @@ Middleware recovery() {
   };
 }
 
-Middleware logger() {
+/// [logQuery] controls whether query parameters are included in log output.
+/// Defaults to false to avoid logging tokens passed as query params.
+Middleware logger({bool logQuery = false}) {
   return (ctx, next) async {
     final sw = Stopwatch()..start();
     final out = await next();
     sw.stop();
 
     int status = (out is Result) ? out.status : 200;
-    print('${ctx.method} ${ctx.uri.path} | $status | ${sw.elapsedMilliseconds}ms');
+    final path = logQuery ? ctx.uri.toString() : ctx.uri.path;
+    print('${ctx.method} $path | $status | ${sw.elapsedMilliseconds}ms');
 
     return out;
   };
@@ -65,6 +69,105 @@ Middleware validateQuery(Validator validator) {
       return JsonResult({'error': 'Invalid query parameters', 'details': errors}, status: 400);
     }
     return await next();
+  };
+}
+
+Middleware securityHeaders({
+  String? contentSecurityPolicy = "default-src 'self'",
+  String xFrameOptions = 'SAMEORIGIN',
+  String referrerPolicy = 'strict-origin-when-cross-origin',
+  String? strictTransportSecurity = 'max-age=31536000; includeSubDomains',
+}) {
+  return (ctx, next) async {
+    final result = await next();
+    if (result is Result) {
+      var r = result;
+      if (contentSecurityPolicy != null) r = r.withHeader('Content-Security-Policy', contentSecurityPolicy);
+      r = r.withHeader('X-Frame-Options', xFrameOptions);
+      r = r.withHeader('X-Content-Type-Options', 'nosniff');
+      r = r.withHeader('Referrer-Policy', referrerPolicy);
+      if (strictTransportSecurity != null) r = r.withHeader('Strict-Transport-Security', strictTransportSecurity);
+      return r;
+    }
+    return result;
+  };
+}
+
+class _RateLimitBucket {
+  DateTime windowStart;
+  int count;
+  _RateLimitBucket(this.windowStart) : count = 1;
+}
+
+/// Fixed-window rate limiter. Counts are per isolate — not shared across
+/// workers when using [Lyzor.spawn].
+Middleware rateLimit({
+  required int maxRequests,
+  required Duration window,
+  String Function(Context ctx)? keyBy,
+}) {
+  final buckets = <String, _RateLimitBucket>{};
+
+  return (ctx, next) async {
+    final key = keyBy != null ? keyBy(ctx) : ctx.request.ip;
+    final now = DateTime.now();
+    final bucket = buckets[key];
+
+    if (bucket == null || now.difference(bucket.windowStart) >= window) {
+      buckets[key] = _RateLimitBucket(now);
+    } else {
+      bucket.count++;
+      if (bucket.count > maxRequests) {
+        return JsonResult({'error': 'Too Many Requests'}, status: 429)
+            .withHeader('Retry-After', window.inSeconds.toString());
+      }
+    }
+
+    return await next();
+  };
+}
+
+String _generateCsrfToken() {
+  final bytes = List<int>.generate(32, (_) => Random.secure().nextInt(256));
+  return base64Url.encode(bytes);
+}
+
+/// Double-submit cookie CSRF protection.
+///
+/// On safe requests (GET, HEAD, OPTIONS) a token is issued via cookie if one
+/// does not already exist. On mutating requests the cookie value must be
+/// echoed in the [headerName] request header, otherwise a 403 is returned.
+///
+/// The cookie is intentionally NOT HttpOnly so that client-side JS can read
+/// and forward it. Set [cookieSecure] to true in production (HTTPS).
+Middleware csrf({
+  String cookieName = 'csrf_token',
+  String headerName = 'x-csrf-token',
+  Set<String> safeMethods = const {'GET', 'HEAD', 'OPTIONS'},
+  String cookiePath = '/',
+  bool cookieSecure = false,
+}) {
+  return (ctx, next) async {
+    final existingToken = ctx.request.cookies[cookieName];
+
+    if (!safeMethods.contains(ctx.method)) {
+      final headerToken = ctx.headers.value(headerName);
+      if (existingToken == null || headerToken == null || headerToken != existingToken) {
+        return JsonResult({'error': 'CSRF token invalid'}, status: 403);
+      }
+    }
+
+    final result = await next();
+
+    if (existingToken == null) {
+      final cookie = Cookie(cookieName, _generateCsrfToken())
+        ..path = cookiePath
+        ..secure = cookieSecure
+        ..httpOnly = false;
+      if (result is Result) return result.withCookie(cookie);
+    }
+
+    return result;
   };
 }
 
