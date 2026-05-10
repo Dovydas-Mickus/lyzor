@@ -1,145 +1,260 @@
 # Lyzor
-A lightweight, high-performance Dart web framework designed for speed, safety, and developer happiness.
 
-## Features
-- **Fast Routing**: Radix-tree based router with $O(K)$ lookup complexity.
-- **Type-Safe Results**: Responses are managed via `Result` objects, separating logic from I/O.
-- **Built-in DI**: Simple service registry for Dependency Injection.
-- **Middleware Pipeline**: Global and route-specific middleware support.
-- **Safe by Default**: Configurable body size limits and built-in crash recovery.
-- **Developer Tools**: CLI for project scaffolding and hot-reloading.
+A lightweight, expressive HTTP server framework for Dart.
 
 ---
 
-## Installation
+## Install CLI
 
-Add Lyzor to your `pubspec.yaml`:
-```yaml
-dependencies:
-  lyzor:
-    git: https://github.com/Dovydas-Mickus/lyzor
-```
-
-Install the Lyzor CLI globally:
 ```bash
-dart pub global activate --source git https://github.com/Dovydas-Mickus/lyzor
+dart pub global activate --source path path/to/lyzor
 ```
+
+## Create a project
+
+```bash
+lyzor create my_app
+cd my_app
+dart pub get
+lyzor dev
+```
+
+`lyzor dev` starts the server and hot-reloads on file changes. Press `q` + Enter to stop.
 
 ---
 
-## Quick Start
+## Quick start
 
-### 1. Create a project
-```bash
-lyzor create my_awesome_api
-cd my_awesome_api
-```
-
-### 2. Write your first app
 ```dart
 import 'package:lyzor/lyzor.dart';
 
-void main() async {
-  final app = Lyzor();
+Future<void> main() async {
+  final app = Lyzor()
+    ..use(recovery())
+    ..use(logger());
 
-  // Global Middleware
-  app.use(logger());
-  app.use(recovery());
-
-  // Simple Route
-  app.get('/hello', (ctx) => 'Hello, Lyzor!');
-
-  // Route with Parameters
-  app.get('/users/:id', (ctx) {
-    final id = ctx.pathParams['id'];
-    return {'user_id': id};
-  });
+  app.route('/').get(() => JsonResult({'message': 'Hello, Lyzor!'}));
 
   await app.run(port: 8080);
 }
 ```
 
-### 3. Run in development mode (with hot-reload)
-```bash
-lyzor dev
+---
+
+## Routing
+
+```dart
+app.route('/users').get(() => ...);
+app.route('/users').post(() => ...);
+app.route('/users/:id').get(() {
+  final id = Context.current.pathParams['id'];
+  return JsonResult({'id': id});
+});
+
+// Wildcard
+app.route('/files/*').get(() {
+  final path = Context.current.pathParams['*'];
+  return TextResult(path);
+});
+```
+
+### Route groups
+
+```dart
+app.group('/api/v1')
+  .route('/users').get(() => ...)
+  .route('/users/:id').delete(() => ...);
+```
+
+### Route-level middleware
+
+```dart
+app.route('/admin').get(() => ...).use(authRequired());
+```
+
+### Controllers
+
+```dart
+class UserController implements Controller {
+  @override
+  void registerRoutes(Lyzor app) {
+    app.route('/users').get(index);
+    app.route('/users/:id').get(show);
+  }
+
+  Object? index() => JsonResult({'users': []});
+  Object? show() {
+    final id = Context.current.pathParams['id'];
+    return JsonResult({'id': id});
+  }
+}
+
+app.addController(UserController());
 ```
 
 ---
 
-## Core Concepts
+## Context
 
-### Dependency Injection
-Register your services once and access them anywhere via the `Context`.
+`Context.current` is available anywhere inside a request — handlers, middleware, services.
 
 ```dart
-final db = Database();
-app.provide<Database>(db);
+final ctx = Context.current;
 
-app.get('/profile', (ctx) {
-  final database = ctx.service<Database>();
-  return database.getUsers();
-});
+ctx.method;           // 'GET', 'POST', ...
+ctx.uri;              // Uri
+ctx.pathParams;       // {'id': '42'}
+ctx.queryParams;      // {'page': '1'}
+ctx.headers;          // HttpHeaders
+ctx.locals;           // Map<String, dynamic> — shared per request
+await ctx.body;       // raw String
+await ctx.json;       // Map<String, dynamic>
 ```
 
-### Response Results
-Instead of manually writing to the response, return a `Result`. Lyzor automatically coerces Strings, Maps, and Lists into the correct format.
+---
+
+## Responses
+
+Return any of these from a handler or middleware:
 
 ```dart
-app.get('/data', (ctx) => Results.json({'status': 'ok'}));
-app.get('/file', (ctx) => Results.file(File('report.pdf')));
-app.get('/old-path', (ctx) => Results.redirect('/new-path'));
+JsonResult({'ok': true})
+TextResult('hello')
+HtmlResult('<h1>Hello</h1>')
+XmlResult('<note/>')
+FileResult(File('report.pdf'))
+RedirectResult('/new-path')
+StatusResult(status: 204)
+```
+
+All results support chaining:
+
+```dart
+JsonResult({'ok': true})
+  .withStatus(201)
+  .withHeader('X-Request-Id', id)
+  .withCookie(Cookie('session', token));
+```
+
+Returning a `Map`, `List`, or `String` from a handler is auto-coerced to `JsonResult` / `TextResult`.
+
+---
+
+## Dependency injection
+
+```dart
+app.provide<Database>(Database(dsn));
+
+// Anywhere in a request:
+final db = Context.current.read<Database>();
+```
+
+---
+
+## Middleware
+
+### Built-in middleware
+
+```dart
+app.use(recovery());          // catches unhandled exceptions, returns 500
+app.use(logger());            // logs method, path, status, duration
+app.use(logger(logQuery: true)); // also logs query params (off by default)
+app.use(cors(origin: 'https://myapp.com'));
+app.use(securityHeaders());   // CSP, X-Frame-Options, HSTS, Referrer-Policy
+app.use(csrf(cookieSecure: true));
+app.use(rateLimit(maxRequests: 100, window: Duration(minutes: 1)));
 ```
 
 ### Validation
-Stop invalid data before it hits your handlers using the declarative validation middleware.
 
 ```dart
-final userValidator = Validator({
-  'email': [Rules.required(), Rules.email()],
+final schema = Validator({
+  'email': [Rules.required(), Rules.isEmail()],
   'password': [Rules.required(), Rules.minLength(8)],
 });
 
-app.post('/register', (ctx) async {
-  final data = await ctx.json;
-  return 'User ${data['email']} created!';
-}).use(validateBody(userValidator));
+app.route('/register')
+  .post(() async {
+    final data = await Context.current.json;
+    // data is guaranteed valid here
+    return StatusResult(status: 201);
+  })
+  .use(validateBody(schema));
 ```
 
-### File Uploads
-Handle `multipart/form-data` with ease.
+### Custom middleware
 
 ```dart
-app.post('/upload', (ctx) async {
-  final form = await ctx.request.formData;
-  final photo = form.files['avatar']?.first;
-
-  if (photo != null) {
-    await photo.save('uploads/${photo.filename}');
-    return 'Saved!';
-  }
-  return Results.json({'error': 'no file'}, status: 400);
-});
+Middleware myMiddleware() {
+  return (ctx, next) async {
+    ctx.locals['started'] = DateTime.now();
+    final result = await next();
+    return result;
+  };
+}
 ```
+
+---
 
 ## Configuration
 
-You can configure global limits like the maximum body size (to prevent OOM attacks):
+```dart
+final app = Lyzor()
+  ..maxBodySize = 5 * 1024 * 1024        // default 10 MB
+  ..requestTimeout = Duration(seconds: 30) // null = no timeout
+  ..poweredBy = false;                     // removes X-Powered-By header
+```
+
+### Multi-isolate (production)
 
 ```dart
-final app = Lyzor();
-app.maxBodySize = 5 * 1024 * 1024; // Limit to 5MB
+await Lyzor.spawn(createApp, count: 4, port: 8080);
 ```
 
 ---
 
-## Middleware Order
-Lyzor executes middleware in the order they are added. Always place `recovery()` and `logger()` at the top.
+## Static files
 
-1. **Global Middleware** (Logger, Recovery, CORS)
-2. **Route Middleware** (Auth, Validation)
-3. **Handler** (Your business logic)
+```dart
+app.static('/assets', './public');
+
+// With options:
+app.static(
+  '/uploads',
+  './uploads',
+  cacheControl: 'private, no-store',
+  listDirectories: false,
+);
+```
 
 ---
 
-### License
+## File uploads
+
+```dart
+app.route('/upload').post(() async {
+  final form = await Context.current.request.getFormData(maxFiles: 1);
+  final file = form.files['avatar']?.first;
+  if (file == null) return JsonResult({'error': 'no file'}, status: 400);
+
+  final bytes = await file.stream.fold<List<int>>([], (a, b) => a..addAll(b));
+  await File('uploads/${file.filename}').writeAsBytes(bytes);
+  return StatusResult(status: 201);
+});
+```
+
+---
+
+## CLI
+
+| Command | Description |
+|---------|-------------|
+| `lyzor create <name>` | Scaffold a new project |
+| `lyzor dev` | Start dev server with hot-reload |
+| `lyzor add feature <name>` | Generate controller / service / repository |
+
+---
+
+## License
+
 MIT

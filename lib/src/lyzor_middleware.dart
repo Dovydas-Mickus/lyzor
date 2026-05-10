@@ -8,11 +8,22 @@ import 'lyzor_base.dart';
 
 typedef Middleware = FutureOr<Object?> Function(Context ctx, Next next);
 
-Middleware recovery() {
+Middleware recovery({
+  FutureOr<Object?> Function(Context ctx, NotFoundException e)? onNotFound,
+  FutureOr<Object?> Function(Context ctx, MethodNotAllowedException e)? onMethodNotAllowed,
+}) {
   return (ctx, next) async {
     try {
       return await next();
     } catch (e, st) {
+      if (e is NotFoundException && onNotFound != null) {
+        return await onNotFound(ctx, e);
+      }
+
+      if (e is MethodNotAllowedException && onMethodNotAllowed != null) {
+        return await onMethodNotAllowed(ctx, e);
+      }
+
       if (e is HttpException) {
         print('[HTTP ${e.statusCode}] ${ctx.method} ${ctx.uri.path} - ${e.message}');
 
@@ -69,6 +80,23 @@ Middleware validateQuery(Validator validator) {
       return JsonResult({'error': 'Invalid query parameters', 'details': errors}, status: 400);
     }
     return await next();
+  };
+}
+
+Middleware validateFormData(Validator validator) {
+  return (ctx, next) async {
+    try {
+      final data = await ctx.formData;
+      final errors = validator.validate(data);
+      if (errors.isNotEmpty) {
+        return JsonResult({'error': 'Validation Failed', 'details': errors}, status: 400);
+      }
+      return await next();
+    } on HttpException catch (_) {
+      rethrow;
+    } catch (e) {
+      return JsonResult({'error': 'Invalid form data'}, status: 400);
+    }
   };
 }
 

@@ -50,6 +50,16 @@ class Request {
     }
   }
 
+  Future<String> get jsonString async {
+    final text = await body;
+    try {
+      if (text.trim().isNotEmpty) jsonDecode(text);
+      return text;
+    } catch (_) {
+      throw BadRequestException('Invalid JSON body');
+    }
+  }
+
   Future<Map<String, String>> get form async => Uri.splitQueryString(await body);
 
   Future<FormData> get formData => getFormData();

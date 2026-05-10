@@ -12,6 +12,7 @@ class Context {
   Map<String, String> get pathParams => request.pathParams;
   Map<String, String> get queryParams => request.queryParams;
   HttpHeaders get headers => request.headers;
+  Future<Map<String, String>> get formData => request.form;
 
   Future<String> get body => request.body;
   Future<Map<String, dynamic>> get json => request.json;
