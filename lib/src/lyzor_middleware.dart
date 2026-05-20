@@ -105,6 +105,7 @@ Middleware securityHeaders({
   String xFrameOptions = 'SAMEORIGIN',
   String referrerPolicy = 'strict-origin-when-cross-origin',
   String? strictTransportSecurity = 'max-age=31536000; includeSubDomains',
+  String? permissionsPolicy = 'camera=(), microphone=(), geolocation=(), payment=()',
 }) {
   return (ctx, next) async {
     final result = await next();
@@ -115,6 +116,7 @@ Middleware securityHeaders({
       r = r.withHeader('X-Content-Type-Options', 'nosniff');
       r = r.withHeader('Referrer-Policy', referrerPolicy);
       if (strictTransportSecurity != null) r = r.withHeader('Strict-Transport-Security', strictTransportSecurity);
+      if (permissionsPolicy != null) r = r.withHeader('Permissions-Policy', permissionsPolicy);
       return r;
     }
     return result;
