@@ -156,10 +156,38 @@ class Lyzor {
 
     print('Starting $workers workers on http://$host:$port');
 
+    // Main port collects two message types from workers:
+    //   SendPort  — the worker's own port, sent once on startup
+    //   'done'    — sent after the worker has drained and closed
+    final mainPort = ReceivePort();
+    final workerSendPorts = <SendPort>[];
+    var drained = 0;
+    final allPortsReady = Completer<void>();
+    final allDrained = Completer<void>();
+
+    mainPort.listen((msg) {
+      if (msg is SendPort) {
+        workerSendPorts.add(msg);
+        if (workerSendPorts.length == workers) allPortsReady.complete();
+      } else if (msg == 'done') {
+        drained++;
+        if (drained >= workers && !allDrained.isCompleted) allDrained.complete();
+      }
+    });
+
     final isolates = await Future.wait([
       for (int i = 0; i < workers; i++)
-        Isolate.spawn(_startWorker, {'builder': builder, 'host': host, 'port': port}),
+        Isolate.spawn(_startWorker, {
+          'builder': builder,
+          'host': host,
+          'port': port,
+          'mainPort': mainPort.sendPort,
+        }),
     ]);
+
+    // Wait until every worker has registered its SendPort before we arm the
+    // signal handlers — ensures no shutdown message is lost.
+    await allPortsReady.future;
 
     final signals = <Future<ProcessSignal>>[ProcessSignal.sigint.watch().first];
     if (!Platform.isWindows) {
@@ -168,18 +196,45 @@ class Lyzor {
     await Future.any(signals);
 
     print('\nShutting down...');
-    for (final isolate in isolates) {
-      isolate.kill(priority: Isolate.beforeNextEvent);
+    for (final workerPort in workerSendPorts) {
+      workerPort.send('shutdown');
     }
+
+    try {
+      await allDrained.future.timeout(const Duration(seconds: 30));
+      print('All workers shut down gracefully.');
+    } on TimeoutException {
+      print('Shutdown timeout — force-killing remaining workers.');
+      for (final isolate in isolates) {
+        isolate.kill(priority: Isolate.beforeNextEvent);
+      }
+    }
+
+    mainPort.close();
   }
 
   static Future<void> _startWorker(Map<String, dynamic> message) async {
     final AppBuilder builder = message['builder'];
     final String host = message['host'];
     final int port = message['port'];
+    final SendPort mainPort = message['mainPort'];
 
     final app = builder();
 
+    // Register this worker's port with the main isolate so it can receive the
+    // shutdown signal, then listen for it.
+    final workerPort = ReceivePort();
+    mainPort.send(workerPort.sendPort);
+
+    workerPort.listen((_) async {
+      await app.close();   // stops accepting requests, drains in-flight ones
+      mainPort.send('done');
+      workerPort.close();
+    });
+
     await app.run(host: host, port: port, shared: true);
+    // app.run() returns once _server.close() is called by the listener above.
+    // The isolate stays alive until workerPort.close() is called, giving
+    // app.close() time to finish draining before the isolate exits.
   }
 }
