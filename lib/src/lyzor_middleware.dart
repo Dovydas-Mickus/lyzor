@@ -129,30 +129,68 @@ class _RateLimitBucket {
 
 /// Fixed-window rate limiter. Counts are per isolate — not shared across
 /// workers when using [Lyzor.spawn].
-Middleware rateLimit({
-  required int maxRequests,
-  required Duration window,
-  String Function(Context ctx)? keyBy,
-}) {
-  final buckets = <String, _RateLimitBucket>{};
+///
+/// [RateLimiter] is usable directly as a [Middleware] via its [call] method.
+/// Call [RateLimiter.cancel] during shutdown to stop the background cleanup timer.
+///
+/// ```dart
+/// final limiter = rateLimit(maxRequests: 100, window: Duration(minutes: 1));
+/// app.use(limiter);
+///
+/// // on shutdown:
+/// limiter.cancel();
+/// await app.close();
+/// ```
+class RateLimiter {
+  final int _maxRequests;
+  final Duration _window;
+  final String Function(Context ctx)? _keyBy;
+  final Map<String, _RateLimitBucket> _buckets = {};
+  late final Timer _timer;
 
-  return (ctx, next) async {
-    final key = keyBy != null ? keyBy(ctx) : ctx.request.ip;
+  RateLimiter._({
+    required int maxRequests,
+    required Duration window,
+    String Function(Context ctx)? keyBy,
+  })  : _maxRequests = maxRequests,
+        _window = window,
+        _keyBy = keyBy {
+    _timer = Timer.periodic(window, (_) => _prune());
+  }
+
+  void _prune() {
     final now = DateTime.now();
-    final bucket = buckets[key];
+    _buckets.removeWhere((_, bucket) => now.difference(bucket.windowStart) >= _window);
+  }
 
-    if (bucket == null || now.difference(bucket.windowStart) >= window) {
-      buckets[key] = _RateLimitBucket(now);
+  /// Stops the background cleanup timer. Call this when the server shuts down.
+  void cancel() => _timer.cancel();
+
+  FutureOr<Object?> call(Context ctx, Next next) async {
+    final key = _keyBy != null ? _keyBy!(ctx) : ctx.request.ip;
+    final now = DateTime.now();
+    final bucket = _buckets[key];
+
+    if (bucket == null || now.difference(bucket.windowStart) >= _window) {
+      _buckets[key] = _RateLimitBucket(now);
     } else {
       bucket.count++;
-      if (bucket.count > maxRequests) {
+      if (bucket.count > _maxRequests) {
         return JsonResult({'error': 'Too Many Requests'}, status: 429)
-            .withHeader('Retry-After', window.inSeconds.toString());
+            .withHeader('Retry-After', _window.inSeconds.toString());
       }
     }
 
     return await next();
-  };
+  }
+}
+
+RateLimiter rateLimit({
+  required int maxRequests,
+  required Duration window,
+  String Function(Context ctx)? keyBy,
+}) {
+  return RateLimiter._(maxRequests: maxRequests, window: window, keyBy: keyBy);
 }
 
 String _generateCsrfToken() {
