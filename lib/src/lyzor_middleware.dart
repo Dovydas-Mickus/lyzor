@@ -169,7 +169,7 @@ class RateLimiter {
   void cancel() => _timer.cancel();
 
   FutureOr<Object?> call(Context ctx, Next next) async {
-    final key = _keyBy != null ? _keyBy!(ctx) : ctx.request.ip;
+    final key = _keyBy != null ? _keyBy(ctx) : ctx.request.ip;
     final now = DateTime.now();
     final bucket = _buckets[key];
 
