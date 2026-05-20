@@ -20,7 +20,8 @@ abstract class Result {
       Cookie(name, '')
         ..path = path
         ..maxAge = 0
-        ..expires = DateTime(1970),
+        ..expires = DateTime(1970)
+        ..sameSite = SameSite.lax,
     );
   }
 

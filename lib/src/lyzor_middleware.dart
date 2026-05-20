@@ -1,6 +1,6 @@
 import 'dart:async';
 import 'dart:convert' show base64Url;
-import 'dart:io' show Cookie;
+import 'dart:io' show Cookie, SameSite;
 import 'dart:math' show Random;
 
 import '../lyzor.dart';
@@ -191,7 +191,8 @@ Middleware csrf({
       final cookie = Cookie(cookieName, _generateCsrfToken())
         ..path = cookiePath
         ..secure = cookieSecure
-        ..httpOnly = false;
+        ..httpOnly = false
+        ..sameSite = SameSite.lax;
       if (result is Result) return result.withCookie(cookie);
     }
 
